@@ -129,6 +129,12 @@ func DescribeServicesErrors() {
 			Entry("service unbind", func() (any, error) {
 				return epinioClient.ServiceUnbind(models.ServiceUnbindRequest{}, "namespace", "servicename")
 			}),
+			Entry("service batch bind", func() (any, error) {
+				return epinioClient.ServiceBatchBind(models.ServiceBatchBindRequest{
+					AppName:      "appname",
+					ServiceNames: []string{"service1", "service2"},
+				}, "namespace", "appname")
+			}),
 			Entry("service list", func() (any, error) {
 				return epinioClient.ServiceList("namespace")
 			}),
