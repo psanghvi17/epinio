@@ -253,9 +253,9 @@ func updateConfigurations(
 	appRef models.AppRef,
 	updatedConfigurations []string,
 ) error {
-	// if empty remove all bound configurations
+	// if empty remove all bound configurations, but preserve service bindings
 	if len(updatedConfigurations) == 0 {
-		return application.BoundConfigurationsSet(ctx, cluster, appRef, []string{}, true)
+		return updateBoundConfigurationsPreservingServices(ctx, cluster, appRef, []string{})
 	}
 
 	var okToBind []string
@@ -273,7 +273,68 @@ func updateConfigurations(
 		okToBind = append(okToBind, configurationName)
 	}
 
-	return application.BoundConfigurationsSet(ctx, cluster, appRef, okToBind, true)
+	return updateBoundConfigurationsPreservingServices(ctx, cluster, appRef, okToBind)
+}
+
+func updateBoundConfigurationsPreservingServices(
+	ctx context.Context,
+	cluster *kubernetes.Cluster,
+	appRef models.AppRef,
+	configurationsToBind []string,
+) error {
+	// We need to preserve the configurations that are bound services.
+	// Users are supposed to unbind services using the 'service unbind' command.
+	// The 'app update' command is sending the whole list of configurations
+	// and if the service bindings are missing they will be unbound.
+
+	// Get all the currently bound configurations
+	currentBound, err := application.BoundConfigurationNames(ctx, cluster, appRef)
+	if err != nil {
+		return apierror.InternalError(err)
+	}
+
+	if len(currentBound) == 0 {
+		return application.BoundConfigurationsSet(ctx, cluster, appRef, configurationsToBind, true)
+	}
+
+	// Optimization: Use a map for current bound for O(1) lookup
+	currentBoundMap := make(map[string]bool, len(currentBound))
+	for _, name := range currentBound {
+		currentBoundMap[name] = true
+	}
+
+	// Fetch all configurations in the namespace to avoid N lookups
+	allConfigs, err := configurations.List(ctx, cluster, appRef.Namespace)
+	if err != nil {
+		return apierror.InternalError(err)
+	}
+
+	serviceConfigurations := []string{}
+	for _, config := range allConfigs {
+		// Check if this config is bound to the app
+		if currentBoundMap[config.Name] {
+			if config.Type == "service" {
+				serviceConfigurations = append(serviceConfigurations, config.Name)
+			}
+		}
+	}
+
+	// Deduplication using map
+	// configurationsToBind contains the User requested configs
+	bindMap := make(map[string]struct{}, len(configurationsToBind)+len(serviceConfigurations))
+	for _, name := range configurationsToBind {
+		bindMap[name] = struct{}{}
+	}
+
+	for _, serviceConfig := range serviceConfigurations {
+		if _, exists := bindMap[serviceConfig]; !exists {
+			configurationsToBind = append(configurationsToBind, serviceConfig)
+			// No need to update map as we don't check it again against itself for uniqueness
+			// (serviceConfigurations are already unique from List)
+		}
+	}
+
+	return application.BoundConfigurationsSet(ctx, cluster, appRef, configurationsToBind, true)
 }
 
 func updateRoutes(
