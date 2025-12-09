@@ -174,7 +174,7 @@ generate-cli-docs:
 	@./scripts/cli-docs-generate.sh ../docs/docs/references/commands/cli
 
 lint:
-	golangci-lint run --skip-files docs.go
+	golangci-lint run
 
 tidy:
 	go mod tidy
