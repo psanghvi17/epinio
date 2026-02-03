@@ -24,8 +24,8 @@ import (
 	"strconv"
 	"strings"
 
-	api "github.com/epinio/epinio/internal/api/v1"
 	"github.com/epinio/epinio/helpers"
+	api "github.com/epinio/epinio/internal/api/v1"
 	"github.com/epinio/epinio/internal/cli/termui"
 	"github.com/epinio/epinio/internal/version"
 	apierrors "github.com/epinio/epinio/pkg/api/core/v1/errors"
@@ -272,10 +272,11 @@ func NewJSONResponseHandler[T any](logger logr.Logger, response T) ResponseHandl
 
 		// Print the full response body for debugging
 		bodyStr := string(bodyBytes)
-		fmt.Fprintf(os.Stderr, "\n=== RAW RESPONSE (Status: %d) ===\n", httpResponse.StatusCode)
+		/*fmt.Fprintf(os.Stderr, "\n=== RAW RESPONSE (Status: %d) ===\n", httpResponse.StatusCode)
 		fmt.Fprintf(os.Stderr, "%s\n", bodyStr)
 		fmt.Fprintf(os.Stderr, "=== END RAW RESPONSE ===\n\n")
 		_ = os.Stderr.Sync() // Force flush to ensure output appears
+		*/
 
 		// Check if the response looks like HTML/XML (starts with '<')
 		if strings.HasPrefix(strings.TrimSpace(bodyStr), "<") {
@@ -322,7 +323,7 @@ func handleError(logger logr.Logger, response *http.Response) error {
 
 	if len(bodyBytes) > 0 {
 		bodyStr := strings.TrimSpace(string(bodyBytes))
-		
+
 		// Print the full response body for debugging - flush immediately
 		fmt.Fprintf(os.Stderr, "\n=== RAW ERROR RESPONSE ===\n")
 		fmt.Fprintf(os.Stderr, "URL: %s\n", response.Request.URL.String())
@@ -331,19 +332,19 @@ func handleError(logger logr.Logger, response *http.Response) error {
 		fmt.Fprintf(os.Stderr, "Body:\n%s\n", bodyStr)
 		fmt.Fprintf(os.Stderr, "=== END RAW ERROR RESPONSE ===\n\n")
 		_ = os.Stderr.Sync() // Force flush to ensure output appears
-		
+
 		// Check if the response looks like HTML/XML (starts with '<')
 		if strings.HasPrefix(bodyStr, "<") {
 			// Response is HTML/XML, not JSON - likely an error page from a proxy or misconfigured server
 			logger.Error(nil, "decoding json error", "body", bodyStr)
-			
+
 			return errors.Errorf(
 				"server returned HTTP %d with HTML/XML response instead of JSON. "+
 					"This usually indicates the API endpoint is misconfigured, the server is not running, "+
 					"or there's a network/proxy issue. Full response:\n%s",
 				response.StatusCode, bodyStr)
 		}
-		
+
 		// Try to parse as JSON
 		err = json.Unmarshal(bodyBytes, epinioError.Err)
 		if err != nil {
