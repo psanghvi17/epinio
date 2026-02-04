@@ -27,7 +27,7 @@ import (
 //counterfeiter:generate -header ../../../LICENSE_HEADER . ApplicationsService
 type ApplicationsService interface {
 	AppCreate(name string, updateRequest models.ApplicationUpdateRequest) error
-	AppDelete(ctx context.Context, appNames []string, all bool) error
+	AppDelete(ctx context.Context, appNames []string, all, deleteImage bool) error
 	AppExec(ctx context.Context, name, instance string) error
 	AppExport(name string, toRegistry bool, exportRequest models.AppExportRequest) error
 	AppLogs(name, stageID string, follow bool, options *client.LogOptions) error
@@ -135,7 +135,8 @@ func NewAppCreateCmd(client ApplicationsService) *cobra.Command {
 }
 
 type AppDeleteConfig struct {
-	all bool
+	all         bool
+	deleteImage bool
 }
 
 // NewAppDeleteCmd returns a new `epinio apps delete` command
@@ -155,7 +156,7 @@ func NewAppDeleteCmd(client ApplicationsService) *cobra.Command {
 				return errors.New("No applications specified for deletion")
 			}
 
-			err := client.AppDelete(cmd.Context(), args, cfg.all)
+			err := client.AppDelete(cmd.Context(), args, cfg.all, cfg.deleteImage)
 			if err != nil {
 				return errors.Wrap(err, "error deleting app")
 			}
@@ -165,6 +166,7 @@ func NewAppDeleteCmd(client ApplicationsService) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&cfg.all, "all", false, "Delete all applications")
+	cmd.Flags().BoolVar(&cfg.deleteImage, "delete-image", false, "Delete the application's container image from the registry")
 
 	return cmd
 }
@@ -379,6 +381,8 @@ func NewAppPortForwardCmd(client ApplicationsService) *cobra.Command {
 
 // NewAppPushCmd returns a new `epinio apps push` command
 func NewAppPushCmd(client ApplicationsService) *cobra.Command {
+	var envReplace bool
+
 	cmd := &cobra.Command{
 		Use:   "push [flags] [PATH_TO_APPLICATION_MANIFEST]",
 		Short: "Push an application declared in the specified manifest",
@@ -445,6 +449,10 @@ func NewAppPushCmd(client ApplicationsService) *cobra.Command {
 				}
 			}
 
+			if cmd.Flags().Changed("env-replace") {
+				m.Configuration.ReplaceEnv = &envReplace
+			}
+
 			err = client.AppPush(cmd.Context(), m)
 			if err != nil {
 				return errors.Wrap(err, "error pushing app to server")
@@ -469,6 +477,8 @@ func NewAppPushCmd(client ApplicationsService) *cobra.Command {
 	envOption(cmd)
 	instancesOption(cmd)
 	chartValueOptionX(cmd)
+	cmd.Flags().BoolVar(&envReplace, "env-replace", false, "Replace existing environment instead of merging")
+	bindFlag(cmd, "env-replace")
 
 	cmd.Flags().String("app-chart", "", "App chart to use for deployment")
 	bindFlag(cmd, "app-chart")
@@ -550,7 +560,11 @@ func NewAppShowCmd(client ApplicationsService, rootCfg *RootConfig) *cobra.Comma
 
 // NewAppUpdateCmd returns a new `epinio apps update` command
 func NewAppUpdateCmd(client ApplicationsService) *cobra.Command {
+	var envReplace bool
+
 	// It scales the named app
+	var noRestart bool
+	
 	cmd := &cobra.Command{
 		Use:               "update NAME",
 		Short:             "Update the named application",
@@ -576,14 +590,23 @@ func NewAppUpdateCmd(client ApplicationsService) *cobra.Command {
 			}
 
 			manifestConfig := m.Configuration
+			var replaceEnvPtr *bool
+			if cmd.Flags().Changed("env-replace") {
+				replaceEnvPtr = &envReplace
+			}
 			updateRequest := models.ApplicationUpdateRequest{
 				Instances:      manifestConfig.Instances,
 				Configurations: manifestConfig.Configurations,
 				Environment:    manifestConfig.Environment,
+				ReplaceEnv:     replaceEnvPtr,
 				Routes:         manifestConfig.Routes,
 				AppChart:       manifestConfig.AppChart,
 				Settings:       manifestConfig.Settings,
 			}
+			
+			// Set restart flag based on --no-restart option
+			restart := !noRestart
+			updateRequest.Restart = &restart
 
 			err = client.AppUpdate(args[0], updateRequest)
 			// Note: errors.Wrap (nil, "...") == nil
@@ -597,10 +620,14 @@ func NewAppUpdateCmd(client ApplicationsService) *cobra.Command {
 	envOption(cmd)
 	instancesOption(cmd)
 	chartValueOptionX(cmd)
+	cmd.Flags().BoolVar(&envReplace, "env-replace", false, "Replace existing environment instead of merging")
+	bindFlag(cmd, "env-replace")
 
 	cmd.Flags().String("app-chart", "", "App chart to use for deployment")
 	bindFlag(cmd, "app-chart")
 	bindFlagCompletionFunc(cmd, "app-chart", NewAppChartMatcherValueFunc(client))
+	
+	cmd.Flags().BoolVar(&noRestart, "no-restart", false, "Prevent restarting the application after update")
 
 	return cmd
 }

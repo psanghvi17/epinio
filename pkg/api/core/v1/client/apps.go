@@ -23,6 +23,7 @@ import (
 	"os/signal"
 	"strconv"
 	"sync"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -33,6 +34,7 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 	wsstream "k8s.io/client-go/transport/websocket"
 
+	"github.com/epinio/epinio/helpers"
 	"github.com/epinio/epinio/helpers/kubernetes/tailer"
 	api "github.com/epinio/epinio/internal/api/v1"
 	"github.com/epinio/epinio/pkg/api/core/v1/models"
@@ -137,7 +139,7 @@ func (c *Client) AppMatch(namespace, prefix string) (models.AppMatchResponse, er
 }
 
 // AppDelete deletes an app
-func (c *Client) AppDelete(namespace string, names []string) (models.ApplicationDeleteResponse, error) {
+func (c *Client) AppDelete(namespace string, names []string, deleteImage bool) (models.ApplicationDeleteResponse, error) {
 	response := models.ApplicationDeleteResponse{}
 
 	queryParams := url.Values{}
@@ -151,7 +153,11 @@ func (c *Client) AppDelete(namespace string, names []string) (models.Application
 		queryParams.Encode(),
 	)
 
-	return Delete(c, endpoint, nil, response)
+	request := models.ApplicationDeleteRequest{
+		DeleteImage: deleteImage,
+	}
+
+	return Delete(c, endpoint, request, response)
 }
 
 // AppUpload uploads a tarball for the named app, which is later used in staging
@@ -206,9 +212,11 @@ func (c *Client) AppDeploy(request models.DeployRequest) (*models.DeployResponse
 
 // LogOptions represents the optional filters for retrieving application logs.
 type LogOptions struct {
-	Tail      *int64
-	Since     *time.Duration
-	SinceTime *time.Time
+	Tail              *int64
+	Since             *time.Duration
+	SinceTime         *time.Time
+	IncludeContainers []string // List of container names/patterns to include (regex patterns supported)
+	ExcludeContainers []string // List of container names/patterns to exclude (regex patterns supported)
 }
 
 // AppLogs streams the logs of all the application instances, in the targeted namespace
@@ -227,7 +235,9 @@ func (c *Client) AppLogs(namespace, appName, stageID string, follow bool, option
 
 	queryParams := url.Values{}
 	queryParams.Add("follow", strconv.FormatBool(follow))
-	queryParams.Add("stage_id", stageID)
+	if stageID != "" {
+		queryParams.Add("stage_id", stageID)
+	}
 	queryParams.Add("authtoken", tokenResponse.Token)
 
 	if options != nil {
@@ -239,6 +249,12 @@ func (c *Client) AppLogs(namespace, appName, stageID string, follow bool, option
 		}
 		if options.SinceTime != nil {
 			queryParams.Add("since_time", options.SinceTime.Format(time.RFC3339))
+		}
+		if len(options.IncludeContainers) > 0 {
+			queryParams.Add("include_containers", strings.Join(options.IncludeContainers, ","))
+		}
+		if len(options.ExcludeContainers) > 0 {
+			queryParams.Add("exclude_containers", strings.Join(options.ExcludeContainers, ","))
 		}
 	}
 
@@ -294,6 +310,55 @@ func (c *Client) StagingComplete(namespace string, id string) (models.Response, 
 	endpoint := api.Routes.Path("StagingComplete", namespace, id)
 
 	return Get(c, endpoint, response)
+}
+
+// StagingCompleteStream opens a websocket that emits a single completion event
+// for the given staging run and closes once the job finishes.
+func (c *Client) StagingCompleteStream(ctx context.Context, namespace, id string, callback func(models.StageCompleteEvent) error) error {
+	tokenResponse, err := c.AuthToken()
+	if err != nil {
+		return err
+	}
+
+	endpoint := api.WsRoutes.Path("StagingCompleteWs", namespace, id)
+	queryParams := url.Values{}
+	queryParams.Add("authtoken", tokenResponse.Token)
+	websocketURL := fmt.Sprintf("%s%s/%s?%s", c.Settings.WSS, api.WsRoot, endpoint, queryParams.Encode())
+
+	webSocketConn, resp, err := websocket.DefaultDialer.DialContext(ctx, websocketURL, c.Headers())
+	if err != nil {
+		if resp != nil && resp.StatusCode != http.StatusOK {
+			return handleError(c.log, resp)
+		}
+		return errors.Wrap(err, "failed to connect to staging completion websocket")
+	}
+	defer func() { _ = webSocketConn.Close() }()
+
+	for {
+		_, message, readErr := webSocketConn.ReadMessage()
+		if readErr != nil {
+			// Normal close means the server is done sending updates.
+			if websocket.IsCloseError(readErr, websocket.CloseNormalClosure) {
+				return nil
+			}
+			return errors.Wrap(readErr, "reading staging completion websocket message")
+		}
+
+		var event models.StageCompleteEvent
+		if unmarshalErr := json.Unmarshal(message, &event); unmarshalErr != nil {
+			return errors.Wrap(unmarshalErr, "decoding staging completion event")
+		}
+
+		if callback != nil {
+			if cbErr := callback(event); cbErr != nil {
+				return cbErr
+			}
+		}
+
+		if event.Completed {
+			return nil
+		}
+	}
 }
 
 // AppRunning checks if the app is running

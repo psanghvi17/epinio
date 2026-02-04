@@ -14,7 +14,6 @@ package usercmd
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"sort"
@@ -155,7 +154,7 @@ func (c *EpinioClient) AppPush(ctx context.Context, manifest models.ApplicationM
 	case models.OriginNone:
 		return fmt.Errorf("%s", "No application origin")
 	case models.OriginPath:
-		uploadedSourceBlobID, err := c.uploadSources(log, appRef, source)
+		uploadedSourceBlobID, err := c.uploadSources(log, appRef, source, manifest)
 		if err != nil {
 			return err
 		}
@@ -266,7 +265,7 @@ func (c *EpinioClient) AppPush(ctx context.Context, manifest models.ApplicationM
 	return nil
 }
 
-func (c *EpinioClient) uploadSources(log logr.Logger, appRef models.AppRef, source string) (string, error) {
+func (c *EpinioClient) uploadSources(log logr.Logger, appRef models.AppRef, source string, manifest models.ApplicationManifest) (string, error) {
 	c.ui.Normal().Msg("Collecting the application sources ...")
 
 	fileInfo, err := os.Stat(source)
@@ -278,11 +277,14 @@ func (c *EpinioClient) uploadSources(log logr.Logger, appRef models.AppRef, sour
 
 	if fileInfo.IsDir() {
 		// package directory as archive/tarball
-		tmpDir, tarball, err := helpers.Tar(source)
+		// Pass ignore patterns from manifest
+		tmpDir, tarball, err := helpers.Tar(source, manifest.Configuration.Ignore)
 
 		defer func() {
 			if err := os.RemoveAll(tmpDir); err != nil {
-				slog.Error("failed to remove temporary directory", "error", err)
+				if helpers.Logger != nil {
+					helpers.Logger.Errorw("failed to remove temporary directory", "error", err)
+				}
 			}
 		}()
 
@@ -304,7 +306,9 @@ func (c *EpinioClient) uploadSources(log logr.Logger, appRef models.AppRef, sour
 
 	defer func() {
 		if err := file.Close(); err != nil {
-			slog.Error("failed to close file", "error", err)
+			if helpers.Logger != nil {
+				helpers.Logger.Errorw("failed to close file", "error", err)
+			}
 		}
 	}()
 
