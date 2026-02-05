@@ -12,10 +12,12 @@
 package application
 
 import (
+	"archive/zip"
 	"bufio"
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -61,10 +63,10 @@ func GetPart(c *gin.Context) apierror.APIErrors {
 	partName := c.Param("part")
 
 	switch partName {
-	case "manifest", "values", "chart", "image":
+	case "manifest", "values", "chart", "image", "archive":
 		// valid parts, no error
 	default:
-		return apierror.NewBadRequestErrorf("unknown '%s' part, expected chart, manifest, image, or values", partName)
+		return apierror.NewBadRequestErrorf("unknown '%s' part, expected chart, manifest, image, values, or archive", partName)
 	}
 
 	cluster, err := kubernetes.GetCluster(ctx)
@@ -99,6 +101,8 @@ func GetPart(c *gin.Context) apierror.APIErrors {
 		return fetchAppImage(c, ctx, cluster, app)
 	case "values":
 		return fetchAppValues(c, cluster, app.Meta)
+	case "archive":
+		return fetchAppArchive(c, ctx, cluster, app)
 	}
 
 	return apierror.InternalError(fmt.Errorf("should not be reached"))
@@ -211,6 +215,117 @@ func fetchAppImage(
 	}
 
 	c.DataFromReader(http.StatusOK, fileInfo.Size(), "application/x-tar", bufio.NewReader(file), nil)
+	return nil
+}
+
+// fetchAppArchive streams a zip containing values.yaml, app-chart.tar.gz, and app-image.tar
+// so the client can download one archive instead of three parts and zipping in the browser.
+func fetchAppArchive(
+	c *gin.Context,
+	ctx context.Context,
+	cluster *kubernetes.Cluster,
+	theApp *models.App,
+) apierror.APIErrors {
+	helpers.Logger.Infow("fetching app archive (chart and images)")
+
+	// 1. Values
+	valuesYAML, err := helm.Values(cluster, theApp.Meta)
+	if err != nil {
+		return apierror.InternalError(err)
+	}
+
+	// 2. Chart (local path)
+	appChart, err := appchart.Lookup(ctx, cluster, theApp.Configuration.AppChart)
+	if err != nil {
+		return apierror.InternalError(err)
+	}
+	if appChart == nil {
+		return apierror.AppChartIsNotKnown(theApp.Configuration.AppChart)
+	}
+	chartArchive, err := chartArchiveURL(appChart, cluster.RestConfig)
+	if err != nil {
+		return apierror.InternalError(err)
+	}
+	chartArchive, err = urlcache.Get(ctx, chartArchive)
+	if err != nil {
+		return apierror.InternalError(err)
+	}
+	chartFile, err := os.Open(chartArchive)
+	if err != nil {
+		return apierror.InternalError(err)
+	}
+	defer chartFile.Close()
+	chartInfo, err := chartFile.Stat()
+	if err != nil {
+		return apierror.InternalError(err)
+	}
+
+	// 3. Image (job + file on PVC)
+	now := strconv.Itoa(time.Now().Nanosecond())
+	imageOutputFilename := fmt.Sprintf(
+		"%s-%s-%s-%s.tar",
+		theApp.Meta.Namespace,
+		theApp.Meta.Name,
+		theApp.StageID,
+		now,
+	)
+	imageFile, err := fetchAppImageFile(ctx, cluster, theApp, imageOutputFilename)
+	if err != nil {
+		return apierror.NewInternalError("failed to retrieve image", err.Error())
+	}
+	defer func() {
+		_ = imageFile.Close()
+		_ = os.Remove(imageExportVolume + imageOutputFilename)
+	}()
+	imageInfo, err := imageFile.Stat()
+	if err != nil {
+		return apierror.NewInternalError("failed to get image file info", err.Error())
+	}
+
+	// Stream zip
+	c.Header("Content-Type", "application/zip")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%q", theApp.Meta.Name+"-helm-chart.zip"))
+	zw := zip.NewWriter(c.Writer)
+	defer zw.Close()
+
+	// values.yaml
+	w, err := zw.CreateHeader(&zip.FileHeader{
+		Name:   "values.yaml",
+		Method: zip.Store,
+	})
+	if err != nil {
+		return apierror.InternalError(err)
+	}
+	if _, err := w.Write(valuesYAML); err != nil {
+		return apierror.InternalError(err)
+	}
+
+	// app-chart.tar.gz
+	w, err = zw.CreateHeader(&zip.FileHeader{
+		Name:               "app-chart.tar.gz",
+		Method:             zip.Store,
+		UncompressedSize64: uint64(chartInfo.Size()),
+	})
+	if err != nil {
+		return apierror.InternalError(err)
+	}
+	if _, err := io.Copy(w, chartFile); err != nil {
+		return apierror.InternalError(err)
+	}
+
+	// app-image.tar
+	w, err = zw.CreateHeader(&zip.FileHeader{
+		Name:               "app-image.tar",
+		Method:             zip.Store,
+		UncompressedSize64: uint64(imageInfo.Size()),
+	})
+	if err != nil {
+		return apierror.InternalError(err)
+	}
+	if _, err := io.Copy(w, imageFile); err != nil {
+		return apierror.InternalError(err)
+	}
+
 	return nil
 }
 
