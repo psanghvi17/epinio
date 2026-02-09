@@ -78,17 +78,20 @@ var _ = Describe("AppExec Endpoint", LApplication, func() {
 				var messageBytes []byte
 				var err error
 
-				// Read until we reach the prompt
-				r, err := regexp.Compile(`.*\$`) // Matches the bash command prompt
+				// Read until we reach the prompt ($ for user, # for root)
+				r, err := regexp.Compile(`.*[\$#]`)
 				Expect(err).ToNot(HaveOccurred())
 				for !r.MatchString(string(messageBytes)) {
 					_, newBytes, err := wsConn.ReadMessage()
 					Expect(err).ToNot(HaveOccurred())
-					messageBytes = append(messageBytes, newBytes[1:]...) // Skip the "channel" byte
+					if len(newBytes) > 1 {
+						messageBytes = append(messageBytes, newBytes[1:]...) // Skip the "channel" byte
+					}
 				}
 
-				// Run the command
-				cmdStr := "echo testing-epinio > /workspace/test-echo"
+				// Run the command (use /var/www/html - sample-app container CWD, not /workspace)
+				testEchoPath := "/var/www/html/test-echo"
+				cmdStr := fmt.Sprintf("echo testing-epinio > %s", testEchoPath)
 				command := append([]byte{0}, []byte(cmdStr)...)
 				err = wsConn.WriteMessage(websocket.BinaryMessage, command)
 				Expect(err).ToNot(HaveOccurred())
@@ -103,10 +106,11 @@ var _ = Describe("AppExec Endpoint", LApplication, func() {
 				Eventually(func() string {
 					_, newBytes, err := wsConn.ReadMessage()
 					Expect(err).ToNot(HaveOccurred())
-
-					messageBytes = append(messageBytes, newBytes[1:]...) // Skip the "channel" byte
+					if len(newBytes) > 1 {
+						messageBytes = append(messageBytes, newBytes[1:]...) // Skip the "channel" byte
+					}
 					return replaceRegex.ReplaceAllString(string(messageBytes), "")
-				}, "20s", "1s").Should(MatchRegexp(cmdStr))
+				}, "20s", "1s").Should(MatchRegexp(regexp.QuoteMeta(cmdStr)))
 
 				// Exit the terminal
 				cmdStr = "\nexit\n"
@@ -122,7 +126,7 @@ var _ = Describe("AppExec Endpoint", LApplication, func() {
 
 				out, err = proc.Kubectl("exec",
 					strings.TrimSpace(out), "-n", namespace,
-					"--", "cat", "/workspace/test-echo")
+					"--", "cat", testEchoPath)
 				Expect(err).ToNot(HaveOccurred(), out)
 
 				Expect(strings.TrimSpace(out)).To(Equal("testing-epinio"))

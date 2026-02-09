@@ -72,12 +72,13 @@ var _ = Describe("AppPortForward Endpoint", LApplication, func() {
 				Expect(connErr).ToNot(HaveOccurred())
 				streamData, streamErr := createStreams(conn)
 
-				// send a GET request through the stream
-				req, _ := http.NewRequest(http.MethodGet, "http://localhost:8080", nil)
+				// send a GET request through the stream (apache inside sample-app listens on port 80)
+				req, _ := http.NewRequest(http.MethodGet, "http://localhost/", nil)
 				Expect(req.Write(streamData)).ToNot(HaveOccurred())
 
 				// read incoming data and parse the response
-				resp, err := http.ReadResponse(bufio.NewReader(streamData), req)
+				reader := bufio.NewReader(streamData)
+				resp, err := http.ReadResponse(reader, req)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(http.StatusOK))
 
@@ -138,12 +139,13 @@ var _ = Describe("AppPortForward Endpoint", LApplication, func() {
 				Expect(connErr).ToNot(HaveOccurred())
 				streamData, streamErr := createStreams(conn)
 
-				// send a GET request through the stream
-				req, _ := http.NewRequest(http.MethodGet, "http://localhost:8080", nil)
+				// send a GET request through the stream (apache inside sample-app listens on port 80)
+				req, _ := http.NewRequest(http.MethodGet, "http://localhost/", nil)
 				Expect(req.Write(streamData)).ToNot(HaveOccurred())
 
 				// read incoming data and parse the response
-				resp, err := http.ReadResponse(bufio.NewReader(streamData), req)
+				reader := bufio.NewReader(streamData)
+				resp, err := http.ReadResponse(reader, req)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(http.StatusOK))
 
@@ -189,7 +191,8 @@ func setupConnection(namespace, appName, instance string) (httpstream.Connection
 func createStreams(conn httpstream.Connection) (httpstream.Stream, httpstream.Stream) {
 	buildHeaders := func(streamType string) http.Header {
 		headers := http.Header{}
-		headers.Set(v1.PortHeader, "8080")
+		// sample-app image (php:8.2-apache) listens on container port 80
+		headers.Set(v1.PortHeader, "80")
 		headers.Set(v1.PortForwardRequestIDHeader, "0")
 		headers.Set(v1.StreamType, streamType)
 		return headers
