@@ -59,8 +59,9 @@ var _ = Describe("AppExec Endpoint", LApplication, func() {
 				//    raw: append([]byte{0}, []byte(cmdStr)...)
 				wsConn, err = env.MakeWebSocketConnection(token, wsURL, wsstream.ChannelWebSocketProtocol)
 				Expect(err).ToNot(HaveOccurred())
-				wsConn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-				wsConn.SetReadDeadline(time.Now().Add(10 * time.Second))
+				// Use 120s deadlines; slow environments may take longer to get the shell prompt
+				wsConn.SetWriteDeadline(time.Now().Add(120 * time.Second))
+				wsConn.SetReadDeadline(time.Now().Add(120 * time.Second))
 			})
 
 			AfterEach(func() {

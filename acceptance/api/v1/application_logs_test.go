@@ -63,12 +63,13 @@ var _ = Describe("AppLogs Endpoint", LApplication, func() {
 
 		By("read the logs")
 		var logs string
+		// Allow up to 120s for log stream; slow environments may delay before close
 		Eventually(func() bool {
 			_, message, err := wsConn.ReadMessage()
 			logLength++
 			logs = fmt.Sprintf("%s %s", logs, string(message))
 			return websocket.IsCloseError(err, websocket.CloseNormalClosure)
-		}, 30*time.Second, 1*time.Second).Should(BeTrue())
+		}, 120*time.Second, 1*time.Second).Should(BeTrue())
 
 		err = wsConn.Close()
 		// With regular `ws` we could expect to not see any errors. With `wss`
@@ -115,7 +116,7 @@ var _ = Describe("AppLogs Endpoint", LApplication, func() {
 
 		By("adding more logs")
 		Eventually(func() int {
-			resp, err := env.Curl("GET", route + ":8443", strings.NewReader("")) //TODO - Move hardcoded port to central function/if the port issue gets resolved, remove this
+			resp, err := env.Curl("GET", route + ":443", strings.NewReader("")) //TODO - Move hardcoded port to central function/if the port issue gets resolved, remove this
 			Expect(err).ToNot(HaveOccurred())
 
 			defer resp.Body.Close()

@@ -105,7 +105,7 @@ func ValidateCV(
 			}
 
 			if !nestedmap {
-				issues = append(issues, fmt.Errorf(`setting "%s": Not known`, keybase))
+				issues = append(issues, fmt.Errorf(`Setting "%s": Not known`, keybase))
 			}
 			continue
 		}

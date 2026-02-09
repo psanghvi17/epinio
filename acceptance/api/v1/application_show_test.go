@@ -68,28 +68,36 @@ var _ = Describe("AppShow Endpoint", LApplication, func() {
 			fmt.Sprintf("--selector=app.kubernetes.io/name=%s", app),
 			"--namespace", namespace, "--output", "name")
 		Expect(err).ToNot(HaveOccurred())
-		podNames := strings.Split(string(out), "\n")
+		rawPodNames := strings.Split(strings.TrimSpace(string(out)), "\n")
+		podNames := make([]string, 0, len(rawPodNames))
+		for _, n := range rawPodNames {
+			if n != "" {
+				podNames = append(podNames, n)
+			}
+		}
+		Expect(podNames).ToNot(BeEmpty(), "expected at least one pod for app %s", app)
 
 		// Run `yes > /dev/null &` and expect at least 1000 millicpus
 		// https://winaero.com/how-to-create-100-cpu-load-in-linux/
+		// Use PID file so we can kill without killall/pkill (not in all images)
 		out, err = proc.Kubectl("exec",
 			"--namespace", namespace, podNames[0], "--container", appObj.Workload.Name,
-			"--", "bin/sh", "-c", "yes > /dev/null 2> /dev/null &")
+			"--", "/bin/sh", "-c", "yes > /dev/null 2>/dev/null & echo $! > /tmp/yes.pid")
 		Expect(err).ToNot(HaveOccurred(), out)
 		Eventually(func() int64 {
 			appObj := appShow(namespace, app)
 			return appObj.Workload.Replicas[replica.Name].MilliCPUs
 		}, "240s", "1s").Should(BeNumerically(">=", 900))
-		// Kill the "yes" process to bring CPU down again
+		// Kill the "yes" process to bring CPU down again (use PID file; no killall in minimal images)
 		out, err = proc.Kubectl("exec",
 			"--namespace", namespace, podNames[0], "--container", appObj.Workload.Name,
-			"--", "killall", "-9", "yes")
+			"--", "/bin/sh", "-c", "kill -9 $(cat /tmp/yes.pid) 2>/dev/null; rm -f /tmp/yes.pid")
 		Expect(err).ToNot(HaveOccurred(), out)
 
 		// Increase memory for 3 minutes to check memory metric
 		out, err = proc.Kubectl("exec",
 			"--namespace", namespace, podNames[0], "--container", appObj.Workload.Name,
-			"--", "bin/bash", "-c", "cat <( </dev/zero head -c 50m) <(sleep 180) | tail")
+			"--", "/bin/bash", "-c", "cat <( </dev/zero head -c 50m) <(sleep 180) | tail")
 		Expect(err).ToNot(HaveOccurred(), out)
 		Eventually(func() int64 {
 			appObj := appShow(namespace, app)
@@ -104,7 +112,7 @@ var _ = Describe("AppShow Endpoint", LApplication, func() {
 		// Kill an app container and see the count increasing
 		out, err = proc.Kubectl("exec",
 			"--namespace", namespace, podNames[0], "--container", appObj.Workload.Name,
-			"--", "bin/sh", "-c", "kill 1")
+			"--", "/bin/sh", "-c", "kill 1")
 		Expect(err).ToNot(HaveOccurred(), out)
 
 		Eventually(func() int32 {

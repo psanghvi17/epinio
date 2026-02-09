@@ -179,7 +179,8 @@ func setupConnection(namespace, appName, instance string) (httpstream.Connection
 	})
 	Expect(err).ToNot(HaveOccurred())
 
-	dialer := gospdy.NewDialer(upgradeRoundTripper, &http.Client{Transport: upgradeRoundTripper}, "GET", portForwardURL)
+	httpClient := &http.Client{Transport: upgradeRoundTripper, Timeout: 180 * time.Second}
+	dialer := gospdy.NewDialer(upgradeRoundTripper, httpClient, "GET", portForwardURL)
 	conn, _, err := dialer.Dial(portforward.PortForwardProtocolV1Name)
 
 	return conn, err

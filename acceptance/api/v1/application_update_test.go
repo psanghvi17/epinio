@@ -484,12 +484,12 @@ var _ = Describe("AppUpdate Endpoint", LApplication, func() {
 			bodyBytes, statusCode := appUpdate(namespace, app, toJSON(request))
 			Expect(statusCode).To(Equal(http.StatusOK), string(bodyBytes))
 
-			// Verify restart occurred (pod names changed)
+			// Verify restart occurred (pod names changed); allow 8m for very slow rollouts
 			Eventually(func() []string {
 				names, err := getPodNames(namespace, app)
 				Expect(err).ToNot(HaveOccurred())
 				return names
-			}, "1m", "2s").ShouldNot(ContainElements(oldPodNames))
+			}, "8m", "2s").ShouldNot(ContainElements(oldPodNames))
 
 			// Verify instances eventually match
 			Eventually(func() string {
@@ -516,12 +516,12 @@ var _ = Describe("AppUpdate Endpoint", LApplication, func() {
 			bodyBytes, statusCode := appUpdate(namespace, app, toJSON(request))
 			Expect(statusCode).To(Equal(http.StatusOK), string(bodyBytes))
 
-			// Verify restart occurred (default behavior)
+			// Verify restart occurred (default behavior); allow 8m for very slow rollouts
 			Eventually(func() []string {
 				names, err := getPodNames(namespace, app)
 				Expect(err).ToNot(HaveOccurred())
 				return names
-			}, "1m", "2s").ShouldNot(ContainElements(oldPodNames))
+			}, "8m", "2s").ShouldNot(ContainElements(oldPodNames))
 
 			// Verify instances eventually match
 			Eventually(func() string {

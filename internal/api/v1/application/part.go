@@ -380,7 +380,7 @@ func getFileImageAndJobCleanup(
 	jobName,
 	imageOutputFilename string,
 ) (*os.File, error) {
-	err := cluster.WaitForJobDone(ctx, helmchart.Namespace(), jobName, time.Minute*2)
+	err := cluster.WaitForJobDone(ctx, helmchart.Namespace(), jobName, time.Minute*5)
 	if err != nil {
 		helpers.Logger.Infow("export job wait error", "error", err, "job", jobName)
 
@@ -402,11 +402,29 @@ func getFileImageAndJobCleanup(
 		return nil, errors.Wrapf(err, "error waiting for job done %s", jobName)
 	}
 
-	// check for file existence
-	file, err := os.Open(imageExportVolume + imageOutputFilename)
+	// If the job failed, the tar file was never created. Return a clear error and clean up the job.
+	failed, err := cluster.IsJobFailed(ctx, jobName, helmchart.Namespace())
 	if err != nil {
-		// NOTE: job is kept, allows for debugging.
+		return nil, errors.Wrapf(err, "error checking job status %s", jobName)
+	}
+	if failed {
+		_ = cluster.DeleteJob(ctx, helmchart.Namespace(), jobName)
+		return nil, errors.New("image export job failed (skopeo copy did not produce the tar file)")
+	}
 
+	// check for file existence (retry briefly in case of volume sync delay)
+	filePath := imageExportVolume + imageOutputFilename
+	var file *os.File
+	for attempt := 0; attempt < 3; attempt++ {
+		file, err = os.Open(filePath)
+		if err == nil {
+			break
+		}
+		if attempt < 2 {
+			time.Sleep(2 * time.Second)
+		}
+	}
+	if err != nil {
 		helpers.Logger.Infow(
 			"export job result error",
 			"error",
@@ -414,6 +432,7 @@ func getFileImageAndJobCleanup(
 			"job",
 			jobName,
 		)
+		_ = cluster.DeleteJob(ctx, helmchart.Namespace(), jobName)
 		return nil, errors.Wrap(err, "failed to open tar file")
 	}
 
