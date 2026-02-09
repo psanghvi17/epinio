@@ -27,7 +27,7 @@ import (
 func ExpectGoodUserLogin(tmpSettingsPath, password, serverURL string) string {
 	By("Regular login")
 	out, err := env.Epinio("", "login", "-u", "epinio", "-p", password,
-		"--trust-ca", "--settings-file", tmpSettingsPath, serverURL)
+		"--trust-ca", "--settings-file", tmpSettingsPath, serverURL+":8443")
 
 	Expect(err).ToNot(HaveOccurred())
 	Expect(out).To(ContainSubstring(`Login to your Epinio cluster`))
