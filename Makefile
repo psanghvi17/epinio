@@ -101,8 +101,9 @@ tag:
 FLAKE_ATTEMPTS ?= 2
 GINKGO_NODES ?= 2
 GINKGO_POLL_PROGRESS_AFTER ?= 200s
+GINKGO_TIMEOUT ?= 90m
 REGEX ?= ""
-STANDARD_TEST_OPTIONS= -v --nodes ${GINKGO_NODES} --poll-progress-after ${GINKGO_POLL_PROGRESS_AFTER} --randomize-all --flake-attempts=${FLAKE_ATTEMPTS} --fail-on-pending
+STANDARD_TEST_OPTIONS= -v --nodes ${GINKGO_NODES} --poll-progress-after ${GINKGO_POLL_PROGRESS_AFTER} --timeout ${GINKGO_TIMEOUT} --randomize-all --flake-attempts=${FLAKE_ATTEMPTS} --fail-on-pending
 
 acceptance-cluster-delete:
 	k3d cluster delete epinio-acceptance
