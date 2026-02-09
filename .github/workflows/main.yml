@@ -30,6 +30,7 @@ env:
   SETUP_GO_VERSION: '1.23.0'
   GOLANGCI_LINT_VERSION: v2.3.0
   GINKGO_NODES: 8
+  GINKGO_VERSION: v2.25.1
   INGRESS_CONTROLLER: nginx
 
 jobs:
@@ -51,7 +52,7 @@ jobs:
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Setup Ginkgo Test Framework
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.16.0
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@${{ env.GINKGO_VERSION }}
 
       - name: Lint Epinio
         uses: golangci/golangci-lint-action@v8
@@ -92,7 +93,7 @@ jobs:
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Setup Ginkgo Test Framework
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.16.0
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@${{ env.GINKGO_VERSION }}
 
       - name: Cache Tools
         uses: actions/cache@v4
@@ -170,7 +171,7 @@ jobs:
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Setup Ginkgo Test Framework
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.16.0
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@${{ env.GINKGO_VERSION }}
 
       - name: Cache Tools
         uses: actions/cache@v4
@@ -233,6 +234,7 @@ jobs:
 
     env:
       GOCOVERDIR: /tmp
+      GINKGO_NODES: 4
 
     steps:
       - name: Checkout
@@ -249,7 +251,7 @@ jobs:
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Setup Ginkgo Test Framework
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.16.0
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@${{ env.GINKGO_VERSION }}
 
       - name: Cache Tools
         uses: actions/cache@v4
@@ -287,6 +289,12 @@ jobs:
           # install certmanager, epinio, and other resources
           make install-cert-manager
           make prepare_environment_k3d
+          # Ensure API is ready before parallel tests (avoids 503/504 from ingress or slow rollout)
+          kubectl wait --for=condition=available deployment/epinio-server -n epinio --timeout=120s
+          for i in $(seq 1 12); do
+            curl -sk -o /dev/null -w "%{http_code}" "https://epinio.127.0.0.1.sslip.io:8443/ready" | grep -q 200 && break
+            sleep 10
+          done
           make test-acceptance-cli-services
           scripts/collect-coverage.sh
 
@@ -328,7 +336,7 @@ jobs:
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Setup Ginkgo Test Framework
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.16.0
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@${{ env.GINKGO_VERSION }}
 
       - name: Cache Tools
         uses: actions/cache@v4
@@ -407,7 +415,7 @@ jobs:
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Setup Ginkgo Test Framework
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.16.0
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@${{ env.GINKGO_VERSION }}
 
       - name: Cache Tools
         uses: actions/cache@v4
@@ -485,7 +493,7 @@ jobs:
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Setup Ginkgo Test Framework
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.16.0
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@${{ env.GINKGO_VERSION }}
 
       - name: Cache Tools
         uses: actions/cache@v4
@@ -576,6 +584,7 @@ jobs:
 
     env:
       GOCOVERDIR: /tmp
+      GINKGO_NODES: 4
 
     steps:
       - name: Checkout
@@ -592,7 +601,7 @@ jobs:
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Setup Ginkgo Test Framework
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.16.0
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@${{ env.GINKGO_VERSION }}
 
       - name: Cache Tools
         uses: actions/cache@v4
@@ -679,7 +688,7 @@ jobs:
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Setup Ginkgo Test Framework
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.16.0
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@${{ env.GINKGO_VERSION }}
 
       - name: Cache Tools
         uses: actions/cache@v4
