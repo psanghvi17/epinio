@@ -50,6 +50,18 @@ import (
 
 const imageExportVolume = "/image-export/"
 
+// validPartNames lists part names accepted by GetPart (manifest, values, chart, image, archive).
+var validPartNames = []string{"manifest", "values", "chart", "image", "archive"}
+
+func isValidPartName(part string) bool {
+	for _, p := range validPartNames {
+		if part == p {
+			return true
+		}
+	}
+	return false
+}
+
 // Has to match mount path of `image-export-volume` in templates/server.yaml of the chart
 // CONSIDER ? Templated, and name given to server through EV ?
 
@@ -62,10 +74,7 @@ func GetPart(c *gin.Context) apierror.APIErrors {
 	appName := c.Param("app")
 	partName := c.Param("part")
 
-	switch partName {
-	case "manifest", "values", "chart", "image", "archive":
-		// valid parts, no error
-	default:
+	if !isValidPartName(partName) {
 		return apierror.NewBadRequestErrorf("unknown '%s' part, expected chart, manifest, image, values, or archive", partName)
 	}
 
@@ -254,7 +263,7 @@ func fetchAppArchive(
 	if err != nil {
 		return apierror.InternalError(err)
 	}
-	defer chartFile.Close()
+	defer func() { _ = chartFile.Close() }()
 	chartInfo, err := chartFile.Stat()
 	if err != nil {
 		return apierror.InternalError(err)
@@ -286,7 +295,7 @@ func fetchAppArchive(
 	c.Header("Content-Type", "application/zip")
 	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%q", theApp.Meta.Name+"-helm-chart.zip"))
 	zw := zip.NewWriter(c.Writer)
-	defer zw.Close()
+	defer func() { _ = zw.Close() }()
 
 	// values.yaml
 	w, err := zw.CreateHeader(&zip.FileHeader{
@@ -301,10 +310,14 @@ func fetchAppArchive(
 	}
 
 	// app-chart.tar.gz
+	chartSize := chartInfo.Size()
+	if chartSize < 0 {
+		return apierror.InternalError(fmt.Errorf("invalid chart file size: %d", chartSize))
+	}
 	w, err = zw.CreateHeader(&zip.FileHeader{
 		Name:               "app-chart.tar.gz",
 		Method:             zip.Store,
-		UncompressedSize64: uint64(chartInfo.Size()),
+		UncompressedSize64: uint64(chartSize),
 	})
 	if err != nil {
 		return apierror.InternalError(err)
