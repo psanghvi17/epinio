@@ -327,10 +327,14 @@ func fetchAppArchive(
 	}
 
 	// app-image.tar
+	imageSize := imageInfo.Size()
+	if imageSize < 0 {
+		return apierror.InternalError(fmt.Errorf("invalid image file size: %d", imageSize))
+	}
 	w, err = zw.CreateHeader(&zip.FileHeader{
 		Name:               "app-image.tar",
 		Method:             zip.Store,
-		UncompressedSize64: uint64(imageInfo.Size()),
+		UncompressedSize64: uint64(imageSize),
 	})
 	if err != nil {
 		return apierror.InternalError(err)
