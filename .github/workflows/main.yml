@@ -584,7 +584,7 @@ jobs:
 
     env:
       GOCOVERDIR: /tmp
-      GINKGO_NODES: 4
+      GINKGO_NODES: 2
 
     steps:
       - name: Checkout
@@ -626,7 +626,7 @@ jobs:
         env:
           REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
-          EPINIO_TIMEOUT_MULTIPLIER: 3
+          EPINIO_TIMEOUT_MULTIPLIER: 5
         run: |
           rm -f /tmp/cov*
           # Don't patch, just install the latest released version

@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -100,7 +101,26 @@ func (m *Machine) EpinioPush(dir string, name string, arg ...string) (string, er
 func (m *Machine) SetupNamespace(namespace string) {
 	By(fmt.Sprintf("creating a namespace: %s", namespace))
 
-	out, err := m.Epinio("", "namespace", "create", namespace)
+	const maxRetries = 3
+	var out string
+	var err error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		out, err = m.Epinio("", "namespace", "create", namespace)
+		if err == nil {
+			break
+		}
+		// Success if namespace already exists (e.g. created before 504 response)
+		if strings.Contains(out, "already exists") {
+			err = nil
+			break
+		}
+		// Retry on 504 Gateway Time-out; namespace creation may succeed on retry
+		if (attempt < maxRetries-1) && (strings.Contains(out, "504") || strings.Contains(out, "Gateway Time-out")) {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		break
+	}
 	ExpectWithOffset(1, err).ToNot(HaveOccurred(), out)
 
 	out, err = m.Epinio("", "namespace", "show", namespace)
