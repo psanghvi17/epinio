@@ -32,8 +32,23 @@ var _ = Describe("ServiceUpdate Endpoint", LService, func() {
 	var catalogService models.CatalogService
 
 	getPodNames := func(namespace, app string) ([]string, error) {
-		podName, err := proc.Kubectl("get", "pods", "-n", namespace, "-l", fmt.Sprintf("app.kubernetes.io/name=%s", app), "-o", "jsonpath='{.items[*].metadata.name}'")
-		return strings.Split(strings.Trim(podName, "'"), " "), err
+		// Only Running pods; excludes Terminating pods that can cause flaky assertions
+		podName, err := proc.Kubectl("get", "pods", "-n", namespace,
+			"-l", fmt.Sprintf("app.kubernetes.io/name=%s", app),
+			"--field-selector=status.phase=Running",
+			"-o", "jsonpath='{.items[*].metadata.name}'")
+		if err != nil {
+			return nil, err
+		}
+		names := strings.Split(strings.Trim(podName, "'"), " ")
+		// Filter empty strings from split when no pods match
+		var result []string
+		for _, n := range names {
+			if n != "" {
+				result = append(result, n)
+			}
+		}
+		return result, nil
 	}
 
 	BeforeEach(func() {
@@ -84,9 +99,17 @@ var _ = Describe("ServiceUpdate Endpoint", LService, func() {
 
 	When("restart parameter is provided", func() {
 		It("does not restart bound apps when restart is false", func() {
+			By("waiting for pod count to stabilize (1 replica)")
+			Eventually(func() []string {
+				names, err := getPodNames(namespace, app)
+				Expect(err).ToNot(HaveOccurred())
+				return names
+			}, "1m", "2s").Should(HaveLen(1))
+
 			By("getting pod names before update")
 			oldPodNames, err := getPodNames(namespace, app)
 			Expect(err).ToNot(HaveOccurred())
+			Expect(oldPodNames).To(HaveLen(1))
 
 			By("updating service with restart: false")
 			restartFalse := false
@@ -215,4 +238,3 @@ var _ = Describe("ServiceUpdate Endpoint", LService, func() {
 	// Suppress unused variable warning - chartName is used for documentation/debugging
 	_ = chartName
 })
-
