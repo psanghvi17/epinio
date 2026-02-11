@@ -109,13 +109,19 @@ func (m *Machine) SetupNamespace(namespace string) {
 		if err == nil {
 			break
 		}
-		// Success if namespace already exists (e.g. created before 504 response)
+		// Success if namespace already exists (e.g. created before timeout/error response)
 		if strings.Contains(out, "already exists") {
 			err = nil
 			break
 		}
-		// Retry on 504 Gateway Time-out; namespace creation may succeed on retry
-		if (attempt < maxRetries-1) && (strings.Contains(out, "504") || strings.Contains(out, "Gateway Time-out")) {
+		// Retry on transient errors: 504, 502, EOF, connection reset
+		isRetryable := strings.Contains(out, "504") ||
+			strings.Contains(out, "502") ||
+			strings.Contains(out, "Gateway Time-out") ||
+			strings.Contains(out, "Bad Gateway") ||
+			strings.Contains(out, "EOF") ||
+			strings.Contains(out, "connection reset")
+		if (attempt < maxRetries-1) && isRetryable {
 			time.Sleep(2 * time.Second)
 			continue
 		}

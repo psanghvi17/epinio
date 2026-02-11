@@ -155,6 +155,7 @@ jobs:
 
     env:
       GOCOVERDIR: /tmp
+      GINKGO_NODES: 2
 
     steps:
       - name: Checkout
