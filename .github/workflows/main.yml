@@ -77,6 +77,8 @@ jobs:
 
     env:
       GOCOVERDIR: /tmp
+      GINKGO_NODES: 2
+      GINKGO_TIMEOUT: 360m
 
     steps:
       - name: Checkout
@@ -118,19 +120,20 @@ jobs:
         env:
           REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
-          EPINIO_TIMEOUT_MULTIPLIER: 3
+          EPINIO_TIMEOUT_MULTIPLIER: 5
         run: |
           rm -f /tmp/cov*
-          # Set the network details
           export EPINIO_SYSTEM_DOMAIN=127.0.0.1.sslip.io
           export EPINIO_PORT=8443
-          # create the cluster
           make acceptance-cluster-setup
-          # get the kubeconfig just in case
           export KUBECONFIG=$(k3d kubeconfig write epinio-acceptance)
-          # install certmanager, epinio, and other resources
           make install-cert-manager
           make prepare_environment_k3d
+          kubectl wait --for=condition=available deployment/epinio-server -n epinio --timeout=120s
+          for i in $(seq 1 12); do
+            curl -sk -o /dev/null -w "%{http_code}" "https://epinio.127.0.0.1.sslip.io:8443/ready" | grep -q 200 && break
+            sleep 10
+          done
           make test-acceptance-cli-other
           scripts/collect-coverage.sh
 
@@ -328,6 +331,7 @@ jobs:
 
     env:
       GOCOVERDIR: /tmp
+      GINKGO_NODES: 4
 
     steps:
       - name: Checkout
@@ -369,19 +373,20 @@ jobs:
         env:
           REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
-          EPINIO_TIMEOUT_MULTIPLIER: 3
+          EPINIO_TIMEOUT_MULTIPLIER: 5
         run: |
           rm -f /tmp/cov*
-          # Set the network details
           export EPINIO_SYSTEM_DOMAIN=127.0.0.1.sslip.io
           export EPINIO_PORT=8443
-          # create the cluster
           make acceptance-cluster-setup
-          # get the kubeconfig just in case
           export KUBECONFIG=$(k3d kubeconfig write epinio-acceptance)
-          # install certmanager, epinio, and other resources
           make install-cert-manager
           make prepare_environment_k3d
+          kubectl wait --for=condition=available deployment/epinio-server -n epinio --timeout=120s
+          for i in $(seq 1 12); do
+            curl -sk -o /dev/null -w "%{http_code}" "https://epinio.127.0.0.1.sslip.io:8443/ready" | grep -q 200 && break
+            sleep 10
+          done
           make test-acceptance-api-other
           scripts/collect-coverage.sh
 
@@ -407,6 +412,7 @@ jobs:
 
     env:
       GOCOVERDIR: /tmp
+      GINKGO_NODES: 4
 
     steps:
       - name: Checkout
@@ -448,19 +454,20 @@ jobs:
         env:
           REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
-          EPINIO_TIMEOUT_MULTIPLIER: 3
+          EPINIO_TIMEOUT_MULTIPLIER: 5
         run: |
           rm -f /tmp/cov*
-          # Set the network details
           export EPINIO_SYSTEM_DOMAIN=127.0.0.1.sslip.io
           export EPINIO_PORT=8443
-          # create the cluster
           make acceptance-cluster-setup
-          # get the kubeconfig just in case
           export KUBECONFIG=$(k3d kubeconfig write epinio-acceptance)
-          # install certmanager, epinio, and other resources
           make install-cert-manager
           make prepare_environment_k3d
+          kubectl wait --for=condition=available deployment/epinio-server -n epinio --timeout=120s
+          for i in $(seq 1 12); do
+            curl -sk -o /dev/null -w "%{http_code}" "https://epinio.127.0.0.1.sslip.io:8443/ready" | grep -q 200 && break
+            sleep 10
+          done
           make test-acceptance-api-apps
           scripts/collect-coverage.sh
 
