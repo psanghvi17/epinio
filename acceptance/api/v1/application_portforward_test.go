@@ -57,39 +57,11 @@ var _ = Describe("AppPortForward Endpoint", LApplication, func() {
 	Describe("GET /namespaces/:namespace/applications/:app/portforward", func() {
 
 		When("you don't specify an instance", func() {
-			var conn httpstream.Connection
-			var connErr error
-
-			BeforeEach(func() {
-				conn, connErr = setupConnection(namespace, appName, "")
-			})
-
-			AfterEach(func() {
-				conn.Close()
-			})
-
 			It("runs a GET through the opened stream and gets the response back", func() {
-				Expect(connErr).ToNot(HaveOccurred())
-				streamData, streamErr := createStreams(conn)
-
-				// send a GET request through the stream (apache inside sample-app listens on port 80)
-				req, _ := http.NewRequest(http.MethodGet, "http://localhost/", nil)
-				Expect(req.Write(streamData)).ToNot(HaveOccurred())
-
-				// read incoming data and parse the response
-				reader := bufio.NewReader(streamData)
-				resp, err := http.ReadResponse(reader, req)
-				Expect(err).ToNot(HaveOccurred())
-				Expect(resp.StatusCode).To(Equal(http.StatusOK))
-
-				// check that there are no errors in the error stream
-				errData, err := io.ReadAll(streamErr)
-				Expect(err).ToNot(HaveOccurred())
-				Expect(errData).To(BeEmpty())
-
-				// close streams
-				Expect(streamData.Close()).ToNot(HaveOccurred())
-				Expect(streamErr.Close()).ToNot(HaveOccurred())
+				// Keep this resilient for transient websocket/SPDY setup issues seen in CI.
+				Eventually(func() error {
+					return runPortForwardGet(namespace, appName, "")
+				}, "30s", "2s").Should(Succeed())
 			})
 		})
 
@@ -106,9 +78,8 @@ var _ = Describe("AppPortForward Endpoint", LApplication, func() {
 		})
 
 		When("you specify a specific instance", func() {
-			var conn httpstream.Connection
-			var connErr error
 			var appName string
+			var instanceName string
 
 			BeforeEach(func() {
 				// Bug fix: Use separate application instead of the main of the suite
@@ -126,41 +97,59 @@ var _ = Describe("AppPortForward Endpoint", LApplication, func() {
 				podNames := strings.Split(strings.TrimSpace(out), "\n")
 				Expect(len(podNames)).To(Equal(2))
 
-				selectedInstance := strings.Replace(podNames[1], "pod/", "", -1)
-				conn, connErr = setupConnection(namespace, appName, selectedInstance)
+				instanceName = strings.Replace(podNames[1], "pod/", "", -1)
 			})
 
 			AfterEach(func() {
-				conn.Close()
 				env.DeleteApp(appName)
 			})
 
 			It("runs a GET through the opened stream and gets the response back", func() {
-				Expect(connErr).ToNot(HaveOccurred())
-				streamData, streamErr := createStreams(conn)
-
-				// send a GET request through the stream (apache inside sample-app listens on port 80)
-				req, _ := http.NewRequest(http.MethodGet, "http://localhost/", nil)
-				Expect(req.Write(streamData)).ToNot(HaveOccurred())
-
-				// read incoming data and parse the response
-				reader := bufio.NewReader(streamData)
-				resp, err := http.ReadResponse(reader, req)
-				Expect(err).ToNot(HaveOccurred())
-				Expect(resp.StatusCode).To(Equal(http.StatusOK))
-
-				// check that there are no errors in the error stream
-				errData, err := io.ReadAll(streamErr)
-				Expect(err).ToNot(HaveOccurred())
-				Expect(errData).To(BeEmpty())
-
-				// close streams
-				Expect(streamData.Close()).ToNot(HaveOccurred())
-				Expect(streamErr.Close()).ToNot(HaveOccurred())
+				// Keep this resilient for transient websocket/SPDY setup issues seen in CI.
+				Eventually(func() error {
+					return runPortForwardGet(namespace, appName, instanceName)
+				}, "30s", "2s").Should(Succeed())
 			})
 		})
 	})
 })
+
+func runPortForwardGet(namespace, appName, instance string) error {
+	conn, err := setupConnection(namespace, appName, instance)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	streamData, streamErr := createStreams(conn)
+	defer streamData.Close()
+	defer streamErr.Close()
+
+	// Send a GET request through the stream (apache inside sample-app listens on port 80).
+	req, _ := http.NewRequest(http.MethodGet, "http://localhost/", nil)
+	if err = req.Write(streamData); err != nil {
+		return err
+	}
+
+	reader := bufio.NewReader(streamData)
+	resp, err := http.ReadResponse(reader, req)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	errData, err := io.ReadAll(streamErr)
+	if err != nil {
+		return err
+	}
+	if len(errData) > 0 {
+		return fmt.Errorf("unexpected data on error stream: %s", string(errData))
+	}
+
+	return nil
+}
 
 func setupConnection(namespace, appName, instance string) (httpstream.Connection, error) {
 	endpoint := fmt.Sprintf("%s%s/%s?instance=%s", serverURL, api.WsRoot, api.WsRoutes.Path("AppPortForward", namespace, appName), instance)

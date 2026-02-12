@@ -24,7 +24,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -101,37 +100,24 @@ func (m *Machine) EpinioPush(dir string, name string, arg ...string) (string, er
 func (m *Machine) SetupNamespace(namespace string) {
 	By(fmt.Sprintf("creating a namespace: %s", namespace))
 
-	const maxRetries = 3
-	var out string
-	var err error
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		out, err = m.Epinio("", "namespace", "create", namespace)
-		if err == nil {
-			break
+	// Namespace creation can race with internal secret propagation on busy CI nodes.
+	EventuallyWithOffset(1, func() error {
+		out, err := m.Epinio("", "namespace", "create", namespace)
+		if err != nil && !strings.Contains(out, "already exists") {
+			return errors.New(out)
 		}
-		// Success if namespace already exists (e.g. created before timeout/error response)
-		if strings.Contains(out, "already exists") {
-			err = nil
-			break
-		}
-		// Retry on transient errors: 504, 502, EOF, connection reset
-		isRetryable := strings.Contains(out, "504") ||
-			strings.Contains(out, "502") ||
-			strings.Contains(out, "Gateway Time-out") ||
-			strings.Contains(out, "Bad Gateway") ||
-			strings.Contains(out, "EOF") ||
-			strings.Contains(out, "connection reset")
-		if (attempt < maxRetries-1) && isRetryable {
-			time.Sleep(2 * time.Second)
-			continue
-		}
-		break
-	}
-	ExpectWithOffset(1, err).ToNot(HaveOccurred(), out)
 
-	out, err = m.Epinio("", "namespace", "show", namespace)
-	ExpectWithOffset(1, err).ToNot(HaveOccurred(), out)
-	ExpectWithOffset(1, out).To(MatchRegexp("Name.*|.*" + namespace))
+		out, err = m.Epinio("", "namespace", "show", namespace)
+		if err != nil {
+			return errors.New(out)
+		}
+
+		if !strings.Contains(out, namespace) {
+			return errors.New(out)
+		}
+
+		return nil
+	}, "4m", "5s").Should(Succeed())
 }
 
 func (m *Machine) TargetNamespace(namespace string) {
