@@ -1036,13 +1036,14 @@ var _ = Describe("Apps", LApplication, func() {
 			})
 
 			It("is using the cache PVC", func() {
-				out, err := proc.Kubectl("get", "pvc", "--namespace",
-					testenv.Namespace, names.GenerateResourceName(namespace, appName))
-				if err != nil {
-					Skip(fmt.Sprintf("build cache PVC not present in this environment: %s", out))
-				}
+				pvcName := names.GenerateResourceName(namespace, appName)
+				// Wait for build cache PVC to appear (staging may create it asynchronously)
+				Eventually(func() bool {
+					_, err := proc.Kubectl("get", "pvc", "--namespace", testenv.Namespace, pvcName)
+					return err == nil
+				}, "2m", "5s").Should(BeTrue(), "build cache PVC should appear after first push")
 
-				out, err = push()
+				out, err := push()
 				Expect(err).ToNot(HaveOccurred(), out)
 
 				Expect(out).To(ContainSubstring("Reusing cached layer"))
@@ -1050,17 +1051,17 @@ var _ = Describe("Apps", LApplication, func() {
 		})
 		When("deleting the app", func() {
 			It("deletes the cache PVC too", func() {
-				out, err := proc.Kubectl("get", "pvc", "--namespace",
-					testenv.Namespace, names.GenerateResourceName(namespace, appName))
-				if err != nil {
-					Skip(fmt.Sprintf("build cache PVC not present in this environment: %s", out))
-				}
+				pvcName := names.GenerateResourceName(namespace, appName)
+				// Wait for build cache PVC to appear (staging may create it asynchronously)
+				Eventually(func() bool {
+					_, err := proc.Kubectl("get", "pvc", "--namespace", testenv.Namespace, pvcName)
+					return err == nil
+				}, "2m", "5s").Should(BeTrue(), "build cache PVC should appear after first push")
 				env.DeleteApp(appName)
 
-				out, err = proc.Kubectl("get", "pvc", "--namespace",
-					testenv.Namespace, names.GenerateResourceName(namespace, appName))
+				out, err := proc.Kubectl("get", "pvc", "--namespace", testenv.Namespace, pvcName)
 				Expect(err).To(HaveOccurred(), out)
-				Expect(out).To(ContainSubstring(`persistentvolumeclaims "%s" not found`, names.GenerateResourceName(namespace, appName)))
+				Expect(out).To(ContainSubstring(`persistentvolumeclaims "%s" not found`, pvcName))
 			})
 		})
 	})
