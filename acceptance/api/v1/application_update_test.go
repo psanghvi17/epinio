@@ -461,7 +461,7 @@ var _ = Describe("AppUpdate Endpoint", LApplication, func() {
 				names, err := getPodNames(namespace, app)
 				Expect(err).ToNot(HaveOccurred())
 				return names
-			}, "10s", "2s").Should(ContainElements(oldPodNames))
+			}, "10s", "2s").Should(ContainElements(oldPodNames), "no-restart test: current pod names should still contain oldPodNames=%v", oldPodNames)
 		})
 
 		It("restarts by default when restart is true", func() {
@@ -482,14 +482,17 @@ var _ = Describe("AppUpdate Endpoint", LApplication, func() {
 				"restart":   true,
 			}
 			bodyBytes, statusCode := appUpdate(namespace, app, toJSON(request))
-			Expect(statusCode).To(Equal(http.StatusOK), string(bodyBytes))
+			Expect(statusCode).To(Equal(http.StatusOK), "appUpdate response: status=%d body=%s", statusCode, string(bodyBytes))
 
 			// Verify restart occurred (pod names changed); allow 8m for very slow rollouts
+			var currentPodNames []string
 			Eventually(func() []string {
 				names, err := getPodNames(namespace, app)
 				Expect(err).ToNot(HaveOccurred())
+				currentPodNames = names
 				return names
-			}, "8m", "2s").ShouldNot(ContainElements(oldPodNames))
+			}, "8m", "2s").ShouldNot(ContainElements(oldPodNames),
+				"restart test: pod names should have changed; oldPodNames=%v currentPodNames=%v (namespace=%s app=%s)", oldPodNames, currentPodNames, namespace, app)
 
 			// Verify instances eventually match
 			Eventually(func() string {
@@ -514,19 +517,22 @@ var _ = Describe("AppUpdate Endpoint", LApplication, func() {
 				"instances": 2,
 			}
 			bodyBytes, statusCode := appUpdate(namespace, app, toJSON(request))
-			Expect(statusCode).To(Equal(http.StatusOK), string(bodyBytes))
+			Expect(statusCode).To(Equal(http.StatusOK), "appUpdate response: status=%d body=%s", statusCode, string(bodyBytes))
 
 			// Verify restart occurred (default behavior); allow 8m for very slow rollouts
+			var currentPodNames []string
 			Eventually(func() []string {
 				names, err := getPodNames(namespace, app)
 				Expect(err).ToNot(HaveOccurred())
+				currentPodNames = names
 				return names
-			}, "8m", "2s").ShouldNot(ContainElements(oldPodNames))
+			}, "8m", "2s").ShouldNot(ContainElements(oldPodNames),
+				"restart (default) test: pod names should have changed; oldPodNames=%v currentPodNames=%v (namespace=%s app=%s)", oldPodNames, currentPodNames, namespace, app)
 
 			// Verify instances eventually match
 			Eventually(func() string {
 				return appShow(namespace, app).Workload.Status
-			}, "1m").Should(Equal("2/2"))
+			}, "1m").Should(Equal("2/2"), "workload status should be 2/2 after scale")
 		})
 
 		It("does not restart when restart is false and updating environment", func() {
@@ -549,20 +555,20 @@ var _ = Describe("AppUpdate Endpoint", LApplication, func() {
 				"restart": false,
 			}
 			bodyBytes, statusCode := appUpdate(namespace, app, toJSON(request))
-			Expect(statusCode).To(Equal(http.StatusOK), string(bodyBytes))
+			Expect(statusCode).To(Equal(http.StatusOK), "appUpdate with restart=false: status=%d body=%s", statusCode, string(bodyBytes))
 
 			// Verify environment variable was added
 			Eventually(func() map[string]string {
 				appObj := appShow(namespace, app)
 				return appObj.Configuration.Environment
-			}, "30s").Should(HaveKeyWithValue("TEST_VAR", "test_value"))
+			}, "30s").Should(HaveKeyWithValue("TEST_VAR", "test_value"), "env TEST_VAR should be set after update")
 
 			// Verify pods DID NOT restart
 			Consistently(func() []string {
 				names, err := getPodNames(namespace, app)
 				Expect(err).ToNot(HaveOccurred())
 				return names
-			}, "10s", "2s").Should(ContainElements(oldPodNames))
+			}, "10s", "2s").Should(ContainElements(oldPodNames), "restart=false test: pod names should be unchanged; oldPodNames=%v", oldPodNames)
 		})
 	})
 })

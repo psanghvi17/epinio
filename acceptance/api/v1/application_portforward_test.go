@@ -59,9 +59,11 @@ var _ = Describe("AppPortForward Endpoint", LApplication, func() {
 		When("you don't specify an instance", func() {
 			It("runs a GET through the opened stream and gets the response back", func() {
 				// Keep this resilient for transient websocket/SPDY setup issues seen in CI.
+				var lastErr error
 				Eventually(func() error {
-					return runPortForwardGet(namespace, appName, "")
-				}, "30s", "2s").Should(Succeed())
+					lastErr = runPortForwardGet(namespace, appName, "")
+					return lastErr
+				}, "2m", "2s").Should(Succeed(), "AppPortForward GET (no instance) failed for namespace=%s app=%s: %v", namespace, appName, lastErr)
 			})
 		})
 
@@ -73,7 +75,12 @@ var _ = Describe("AppPortForward Endpoint", LApplication, func() {
 			})
 
 			It("fails with a 400 bad request", func() {
-				Expect(connErr).To(HaveOccurred())
+				if connErr == nil {
+					fmt.Fprintf(GinkgoWriter, "[AppPortForward] expected connection to nonexisting instance to fail; got nil error\n")
+				} else {
+					fmt.Fprintf(GinkgoWriter, "[AppPortForward] connection to nonexisting instance failed as expected: %v\n", connErr)
+				}
+				Expect(connErr).To(HaveOccurred(), "expected dial to nonexisting instance to fail")
 			})
 		})
 
@@ -106,9 +113,11 @@ var _ = Describe("AppPortForward Endpoint", LApplication, func() {
 
 			It("runs a GET through the opened stream and gets the response back", func() {
 				// Keep this resilient for transient websocket/SPDY setup issues seen in CI.
+				var lastErr error
 				Eventually(func() error {
-					return runPortForwardGet(namespace, appName, instanceName)
-				}, "30s", "2s").Should(Succeed())
+					lastErr = runPortForwardGet(namespace, appName, instanceName)
+					return lastErr
+				}, "2m", "2s").Should(Succeed(), "AppPortForward GET (instance=%s) failed for namespace=%s app=%s: %v", instanceName, namespace, appName, lastErr)
 			})
 		})
 	})
@@ -117,7 +126,8 @@ var _ = Describe("AppPortForward Endpoint", LApplication, func() {
 func runPortForwardGet(namespace, appName, instance string) error {
 	conn, err := setupConnection(namespace, appName, instance)
 	if err != nil {
-		return err
+		fmt.Fprintf(GinkgoWriter, "[AppPortForward] setupConnection failed namespace=%s app=%s instance=%q: %v\n", namespace, appName, instance, err)
+		return fmt.Errorf("setupConnection: %w", err)
 	}
 	defer conn.Close()
 
@@ -128,23 +138,28 @@ func runPortForwardGet(namespace, appName, instance string) error {
 	// Send a GET request through the stream (apache inside sample-app listens on port 80).
 	req, _ := http.NewRequest(http.MethodGet, "http://localhost/", nil)
 	if err = req.Write(streamData); err != nil {
-		return err
+		fmt.Fprintf(GinkgoWriter, "[AppPortForward] req.Write failed: %v\n", err)
+		return fmt.Errorf("req.Write: %w", err)
 	}
 
 	reader := bufio.NewReader(streamData)
 	resp, err := http.ReadResponse(reader, req)
 	if err != nil {
-		return err
+		fmt.Fprintf(GinkgoWriter, "[AppPortForward] ReadResponse failed (often EOF under load): %v\n", err)
+		return fmt.Errorf("ReadResponse: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(GinkgoWriter, "[AppPortForward] unexpected status code: got %d (expected 200)\n", resp.StatusCode)
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
 	errData, err := io.ReadAll(streamErr)
 	if err != nil {
-		return err
+		fmt.Fprintf(GinkgoWriter, "[AppPortForward] ReadAll(streamErr) failed: %v\n", err)
+		return fmt.Errorf("ReadAll error stream: %w", err)
 	}
 	if len(errData) > 0 {
+		fmt.Fprintf(GinkgoWriter, "[AppPortForward] error stream non-empty: %q\n", string(errData))
 		return fmt.Errorf("unexpected data on error stream: %s", string(errData))
 	}
 

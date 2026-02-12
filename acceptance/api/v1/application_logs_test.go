@@ -98,20 +98,19 @@ var _ = Describe("AppLogs Endpoint", LApplication, func() {
 		logLength := len(strings.Split(existingLogs, "\n"))
 
 		token, err := authToken()
-		Expect(err).ToNot(HaveOccurred())
+		Expect(err).ToNot(HaveOccurred(), "authToken failed")
 
 		var urlArgs = []string{}
 		urlArgs = append(urlArgs, fmt.Sprintf("follow=%t", true))
 		wsURL := fmt.Sprintf("%s%s/%s?%s", websocketURL, v1.WsRoot, v1.WsRoutes.Path("AppLogs", namespace, app), strings.Join(urlArgs, "&"))
 		wsConn, err := env.MakeWebSocketConnection(token, wsURL)
-		Expect(err).ToNot(HaveOccurred())
+		Expect(err).ToNot(HaveOccurred(), "MakeWebSocketConnection failed for AppLogs")
 
 		By("get to the end of logs")
 		for i := 0; i < logLength; i++ {
 			_, message, err := wsConn.ReadMessage()
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(message).NotTo(BeNil())
+			Expect(err).NotTo(HaveOccurred(), "AppLogs ReadMessage at index %d (logLength=%d): %v", i, logLength, err)
+			Expect(message).NotTo(BeNil(), "AppLogs message nil at index %d", i)
 		}
 
 		By("adding more logs")
@@ -122,7 +121,7 @@ var _ = Describe("AppLogs Endpoint", LApplication, func() {
 			defer resp.Body.Close()
 
 			bodyBytes, err := io.ReadAll(resp.Body)
-			Expect(err).ToNot(HaveOccurred(), resp)
+			Expect(err).ToNot(HaveOccurred(), "ReadAll resp.Body: %v", resp)
 
 			// reply must be from the phpinfo app
 			if !strings.Contains(string(bodyBytes), "phpinfo()") {
@@ -130,15 +129,17 @@ var _ = Describe("AppLogs Endpoint", LApplication, func() {
 			}
 
 			return resp.StatusCode
-		}, 30*time.Second, 1*time.Second).Should(Equal(http.StatusOK))
+		}, 30*time.Second, 1*time.Second).Should(Equal(http.StatusOK), "GET %s:443 should return 200 and phpinfo body", route)
 
 		By("checking the latest log message")
+		var lastMessage string
 		Eventually(func() string {
 			_, message, err := wsConn.ReadMessage()
-			Expect(err).NotTo(HaveOccurred())
+			Expect(err).NotTo(HaveOccurred(), "AppLogs ReadMessage (new log): %v", err)
 			Expect(message).NotTo(BeNil())
-			return string(message)
-		}, "10s").Should(ContainSubstring("[200]: GET /"))
+			lastMessage = string(message)
+			return lastMessage
+		}, "10s").Should(ContainSubstring("[200]: GET /"), "expected log line [200]: GET / in websocket message; got: %q", lastMessage)
 
 		err = wsConn.Close()
 		Expect(err).ToNot(HaveOccurred())

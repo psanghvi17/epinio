@@ -126,15 +126,15 @@ var _ = Describe("ServiceUpdate Endpoint", LService, func() {
 				serverURL, apiv1.Root, apiv1.Routes.Path("ServiceUpdate", namespace, serviceName))
 			response, err := env.Curl("PATCH", endpoint, strings.NewReader(string(requestBody)))
 			Expect(err).ToNot(HaveOccurred())
-			Expect(response).ToNot(BeNil())
-			Expect(response.StatusCode).To(Equal(http.StatusOK))
+			Expect(response).ToNot(BeNil(), "ServiceUpdate PATCH response nil")
+			Expect(response.StatusCode).To(Equal(http.StatusOK), "ServiceUpdate restart=false: status=%d", response.StatusCode)
 
 			By("verifying pods DID NOT restart")
 			Consistently(func() []string {
 				names, err := getPodNames(namespace, app)
 				Expect(err).ToNot(HaveOccurred())
 				return names
-			}, "15s", "2s").Should(ContainElements(oldPodNames))
+			}, "15s", "2s").Should(ContainElements(oldPodNames), "ServiceUpdate restart=false: pod names should be unchanged; oldPodNames=%v", oldPodNames)
 
 			By("verifying app is still healthy")
 			out, err := env.Epinio("", "app", "show", app)
@@ -162,22 +162,24 @@ var _ = Describe("ServiceUpdate Endpoint", LService, func() {
 				serverURL, apiv1.Root, apiv1.Routes.Path("ServiceUpdate", namespace, serviceName))
 			response, err := env.Curl("PATCH", endpoint, strings.NewReader(string(requestBody)))
 			Expect(err).ToNot(HaveOccurred())
-			Expect(response).ToNot(BeNil())
-			Expect(response.StatusCode).To(Equal(http.StatusOK))
+			Expect(response).ToNot(BeNil(), "ServiceUpdate PATCH response nil")
+			Expect(response.StatusCode).To(Equal(http.StatusOK), "ServiceUpdate restart=true: status=%d", response.StatusCode)
 
 			By("verifying pods DID restart")
+			var currentPodNames []string
 			Eventually(func() []string {
 				names, err := getPodNames(namespace, app)
 				Expect(err).ToNot(HaveOccurred())
+				currentPodNames = names
 				return names
-			}, "2m", "2s").ShouldNot(ContainElements(oldPodNames))
+			}, "2m", "2s").ShouldNot(ContainElements(oldPodNames), "ServiceUpdate restart=true: pod names should have changed; oldPodNames=%v currentPodNames=%v", oldPodNames, currentPodNames)
 
 			By("verifying app is healthy after restart")
 			Eventually(func() string {
 				out, err := env.Epinio("", "app", "show", app)
 				Expect(err).ToNot(HaveOccurred())
 				return out
-			}, "2m").Should(ContainSubstring("1/1"))
+			}, "2m").Should(ContainSubstring("1/1"), "app show should report 1/1 after restart")
 		})
 
 		It("restarts bound apps by default when restart parameter is omitted (backward compatibility)", func() {
@@ -199,22 +201,24 @@ var _ = Describe("ServiceUpdate Endpoint", LService, func() {
 				serverURL, apiv1.Root, apiv1.Routes.Path("ServiceUpdate", namespace, serviceName))
 			response, err := env.Curl("PATCH", endpoint, strings.NewReader(string(requestBody)))
 			Expect(err).ToNot(HaveOccurred())
-			Expect(response).ToNot(BeNil())
-			Expect(response.StatusCode).To(Equal(http.StatusOK))
+			Expect(response).ToNot(BeNil(), "ServiceUpdate PATCH response nil")
+			Expect(response.StatusCode).To(Equal(http.StatusOK), "ServiceUpdate (omit restart): status=%d", response.StatusCode)
 
 			By("verifying pods DID restart (default behavior)")
+			var currentPodNames []string
 			Eventually(func() []string {
 				names, err := getPodNames(namespace, app)
 				Expect(err).ToNot(HaveOccurred())
+				currentPodNames = names
 				return names
-			}, "2m", "2s").ShouldNot(ContainElements(oldPodNames))
+			}, "2m", "2s").ShouldNot(ContainElements(oldPodNames), "ServiceUpdate default restart: pod names should have changed; oldPodNames=%v currentPodNames=%v", oldPodNames, currentPodNames)
 
 			By("verifying app is healthy after restart")
 			Eventually(func() string {
 				out, err := env.Epinio("", "app", "show", app)
 				Expect(err).ToNot(HaveOccurred())
 				return out
-			}, "2m").Should(ContainSubstring("1/1"))
+			}, "2m").Should(ContainSubstring("1/1"), "app show should report 1/1 after default restart")
 		})
 	})
 
@@ -231,8 +235,8 @@ var _ = Describe("ServiceUpdate Endpoint", LService, func() {
 			serverURL, apiv1.Root, apiv1.Routes.Path("ServiceUpdate", namespace, "nonexistent-service"))
 		response, err := env.Curl("PATCH", endpoint, strings.NewReader(string(requestBody)))
 		Expect(err).ToNot(HaveOccurred())
-		Expect(response).ToNot(BeNil())
-		Expect(response.StatusCode).To(Equal(http.StatusNotFound))
+		Expect(response).ToNot(BeNil(), "PATCH nonexistent service: response nil")
+		Expect(response.StatusCode).To(Equal(http.StatusNotFound), "PATCH nonexistent service: expected 404, got status=%d", response.StatusCode)
 	})
 
 	// Suppress unused variable warning - chartName is used for documentation/debugging
