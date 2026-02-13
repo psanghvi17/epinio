@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
 
 	"github.com/epinio/epinio/acceptance/helpers/machine"
 	"github.com/epinio/epinio/acceptance/helpers/proc"
@@ -149,4 +150,27 @@ func AppRouteFromOutput(out string) string {
 		return ""
 	}
 	return matches[1]
+}
+
+// AppRouteWithPort ensures the route URL has the correct port for the environment.
+// In k3d, the loadbalancer maps host port 8443 to container 443, so app routes
+// must use :8443 when curling from the host. Routes without a port default to 443
+// which causes "connection refused".
+func AppRouteWithPort(route string) string {
+	if route == "" {
+		return route
+	}
+	port := os.Getenv("EPINIO_PORT")
+	if port == "" {
+		port = "8443" // k3d default
+	}
+	// If route already has a port, return as-is (avoid double-adding)
+	if regexp.MustCompile(`:\d+/?($|\?)`).MatchString(route) {
+		return route
+	}
+	// Add port before any path
+	if idx := strings.Index(route, "/"); idx > 0 {
+		return route[:idx] + ":" + port + route[idx:]
+	}
+	return route + ":" + port
 }

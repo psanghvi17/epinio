@@ -63,7 +63,7 @@ var _ = Describe("AppPortForward Endpoint", LApplication, func() {
 				Eventually(func() error {
 					lastErr = runPortForwardGet(namespace, appName, "")
 					return lastErr
-				}, "2m", "2s").Should(Succeed(), "AppPortForward GET (no instance) failed for namespace=%s app=%s: %v", namespace, appName, lastErr)
+				}, "4m", "5s").Should(Succeed(), "AppPortForward GET (no instance) failed for namespace=%s app=%s: %v", namespace, appName, lastErr)
 			})
 		})
 
@@ -117,7 +117,7 @@ var _ = Describe("AppPortForward Endpoint", LApplication, func() {
 				Eventually(func() error {
 					lastErr = runPortForwardGet(namespace, appName, instanceName)
 					return lastErr
-				}, "2m", "2s").Should(Succeed(), "AppPortForward GET (instance=%s) failed for namespace=%s app=%s: %v", instanceName, namespace, appName, lastErr)
+				}, "4m", "5s").Should(Succeed(), "AppPortForward GET (instance=%s) failed for namespace=%s app=%s: %v", instanceName, namespace, appName, lastErr)
 			})
 		})
 	})

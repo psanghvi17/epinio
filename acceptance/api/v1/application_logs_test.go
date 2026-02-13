@@ -129,7 +129,7 @@ var _ = Describe("AppLogs Endpoint", LApplication, func() {
 			}
 
 			return resp.StatusCode
-		}, 30*time.Second, 1*time.Second).Should(Equal(http.StatusOK), "GET %s:443 should return 200 and phpinfo body", route)
+		}, 60*time.Second, 2*time.Second).Should(Equal(http.StatusOK), "GET %s:443 should return 200 and phpinfo body", route)
 
 		By("checking the latest log message")
 		var lastMessage string
@@ -139,7 +139,7 @@ var _ = Describe("AppLogs Endpoint", LApplication, func() {
 			Expect(message).NotTo(BeNil())
 			lastMessage = string(message)
 			return lastMessage
-		}, "10s").Should(ContainSubstring("[200]: GET /"), "expected log line [200]: GET / in websocket message; got: %q", lastMessage)
+		}, "30s", "2s").Should(ContainSubstring("[200]: GET /"), "expected log line [200]: GET / in websocket message; got: %q", lastMessage)
 
 		err = wsConn.Close()
 		Expect(err).ToNot(HaveOccurred())

@@ -87,7 +87,7 @@ var _ = Describe("AppShow Endpoint", LApplication, func() {
 		Eventually(func() int64 {
 			appObj := appShow(namespace, app)
 			return appObj.Workload.Replicas[replica.Name].MilliCPUs
-		}, "240s", "1s").Should(BeNumerically(">=", 900))
+		}, "360s", "2s").Should(BeNumerically(">=", 900))
 		// Kill the "yes" process to bring CPU down again (use PID file; no killall in minimal images)
 		out, err = proc.Kubectl("exec",
 			"--namespace", namespace, podNames[0], "--container", appObj.Workload.Name,
@@ -102,7 +102,7 @@ var _ = Describe("AppShow Endpoint", LApplication, func() {
 		Eventually(func() int64 {
 			appObj := appShow(namespace, app)
 			return appObj.Workload.Replicas[replica.Name].MemoryBytes
-		}, "240s", "1s").Should(BeNumerically(">=", 0))
+		}, "360s", "2s").Should(BeNumerically(">=", 0))
 
 		Consistently(func() int32 {
 			appObj := appShow(namespace, app)

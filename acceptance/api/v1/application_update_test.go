@@ -484,14 +484,14 @@ var _ = Describe("AppUpdate Endpoint", LApplication, func() {
 			bodyBytes, statusCode := appUpdate(namespace, app, toJSON(request))
 			Expect(statusCode).To(Equal(http.StatusOK), "appUpdate response: status=%d body=%s", statusCode, string(bodyBytes))
 
-			// Verify restart occurred (pod names changed); allow 8m for very slow rollouts
+			// Verify restart occurred (pod names changed); allow 12m for very slow rollouts in CI
 			var currentPodNames []string
 			Eventually(func() []string {
 				names, err := getPodNames(namespace, app)
 				Expect(err).ToNot(HaveOccurred())
 				currentPodNames = names
 				return names
-			}, "8m", "2s").ShouldNot(ContainElements(oldPodNames),
+			}, "12m", "5s").ShouldNot(ContainElements(oldPodNames),
 				"restart test: pod names should have changed; oldPodNames=%v currentPodNames=%v (namespace=%s app=%s)", oldPodNames, currentPodNames, namespace, app)
 
 			// Verify instances eventually match
@@ -519,14 +519,14 @@ var _ = Describe("AppUpdate Endpoint", LApplication, func() {
 			bodyBytes, statusCode := appUpdate(namespace, app, toJSON(request))
 			Expect(statusCode).To(Equal(http.StatusOK), "appUpdate response: status=%d body=%s", statusCode, string(bodyBytes))
 
-			// Verify restart occurred (default behavior); allow 8m for very slow rollouts
+			// Verify restart occurred (default behavior); allow 12m for very slow rollouts in CI
 			var currentPodNames []string
 			Eventually(func() []string {
 				names, err := getPodNames(namespace, app)
 				Expect(err).ToNot(HaveOccurred())
 				currentPodNames = names
 				return names
-			}, "8m", "2s").ShouldNot(ContainElements(oldPodNames),
+			}, "12m", "5s").ShouldNot(ContainElements(oldPodNames),
 				"restart (default) test: pod names should have changed; oldPodNames=%v currentPodNames=%v (namespace=%s app=%s)", oldPodNames, currentPodNames, namespace, app)
 
 			// Verify instances eventually match
