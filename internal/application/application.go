@@ -28,14 +28,12 @@ import (
 	"github.com/epinio/epinio/helpers"
 	"github.com/epinio/epinio/helpers/kubernetes"
 	"github.com/epinio/epinio/helpers/kubernetes/tailer"
-	"github.com/epinio/epinio/internal/cli/server/requestctx"
 	"github.com/epinio/epinio/internal/duration"
 	"github.com/epinio/epinio/internal/helm"
 	"github.com/epinio/epinio/internal/helmchart"
 	"github.com/epinio/epinio/internal/registry"
 	"github.com/epinio/epinio/internal/s3manager"
 	"github.com/epinio/epinio/pkg/api/core/v1/models"
-	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 
 	epinioappv1 "github.com/epinio/application/api/v1"
@@ -438,10 +436,10 @@ func List(
 
 	metrics, err := GetPodMetrics(ctx, cluster, namespace)
 	if err != nil {
-		// While the error is ignored, as the server can operate without metrics,
-		// and while the missing metrics will be noted in the data shown to the
-		// user, it is logged so that the operator can see this as well.
-		requestctx.Logger(ctx).Error(err, "metrics not available")
+		// While the error is ignored, as the server can operate without metrics, and while
+		// the missing metrics will be noted in the data shown to the user, it is logged so
+		// that the operator can see this as well.
+		helpers.Logger.Errorw("metrics not available", "error", err)
 	}
 
 	// VI. load the statuses of all staging jobs
@@ -501,26 +499,26 @@ func Delete(
 		return nil, err
 	}
 
-	log := requestctx.Logger(ctx)
+	log := helpers.Logger.With("component", "ApplicationDelete")
 
 	// Get image URL before deleting the app resource (needed for image deletion)
 	var imageURL string
 	if deleteImage {
 		appCR, err := Get(ctx, cluster, appRef)
 		if err != nil {
-			log.Error(err, "Failed to get application to retrieve image URL, skipping image deletion", "app", appRef.Name)
+			log.Errorw("Failed to get application to retrieve image URL, skipping image deletion", "error", err, "app", appRef.Name)
 		} else {
 			imageURL, err = ImageURL(appCR)
 			if err != nil {
-				log.Error(err, "Failed to get image URL from application, skipping image deletion", "app", appRef.Name)
+				log.Errorw("Failed to get image URL from application, skipping image deletion", "error", err, "app", appRef.Name)
 			} else if imageURL == "" {
-				log.Info("No image URL found in application, skipping image deletion", "app", appRef.Name)
+				log.Infow("No image URL found in application, skipping image deletion", "app", appRef.Name)
 			}
 		}
 	}
 
 	// Ignore `not found` errors - App exists, without workload.
-	err = helm.Remove(cluster, log, appRef)
+	err = helm.Remove(cluster, appRef)
 	if err != nil && !strings.Contains(err.Error(), "release: not found") {
 		return nil, err
 	}
@@ -542,10 +540,10 @@ func Delete(
 
 	// Delete container image from registry if requested
 	if deleteImage && imageURL != "" {
-		err = deleteContainerImage(ctx, log, cluster, imageURL)
+		err = deleteContainerImage(ctx, cluster, imageURL)
 		if err != nil {
 			// Log the error but don't fail the deletion - the app is already deleted
-			log.Error(err, "Failed to delete container image from registry", "image", imageURL)
+			log.Errorw("Failed to delete container image from registry", "error", err, "image", imageURL)
 		}
 	}
 
@@ -584,9 +582,18 @@ func Delete(
 }
 
 // deleteContainerImage deletes the container image from the registry
-func deleteContainerImage(ctx context.Context, log logr.Logger, cluster *kubernetes.Cluster, imageURL string) error {
+func deleteContainerImage(
+	ctx context.Context,
+	cluster *kubernetes.Cluster,
+	imageURL string,
+) error {
 	// Get registry connection details
-	connectionDetails, err := registry.GetConnectionDetails(ctx, cluster, helmchart.Namespace(), registry.CredentialsSecretName)
+	connectionDetails, err := registry.GetConnectionDetails(
+		ctx,
+		cluster,
+		helmchart.Namespace(),
+		registry.CredentialsSecretName,
+	)
 	if err != nil {
 		return errors.Wrap(err, "getting registry connection details")
 	}
@@ -619,7 +626,11 @@ func deleteContainerImage(ctx context.Context, log logr.Logger, cluster *kuberne
 	if !found {
 		// If no exact match, use the first credentials (might work for some registries)
 		matchingCreds = credentials
-		log.Info("No exact registry match found, using first available credentials", "imageRegistry", imageRegistryURL)
+		helpers.Logger.Infow(
+			"No exact registry match found, using first available credentials",
+			"imageRegistry",
+			imageRegistryURL,
+		)
 	}
 
 	// Get TLS config to handle self-signed certificates
@@ -639,11 +650,21 @@ func deleteContainerImage(ctx context.Context, log logr.Logger, cluster *kuberne
 			if certData, found := secret.Data["tls.crt"]; found {
 				if rootCAs.AppendCertsFromPEM(certData) {
 					certsAdded = true
-					log.Info("Added registry certificate from secret to TLS config", "secret", registryCertSecret)
+					helpers.Logger.Infow(
+						"Added registry certificate from secret to TLS config",
+						"secret",
+						registryCertSecret,
+					)
 				}
 			}
 		} else {
-			log.Info("Registry certificate secret not found, continuing without it", "secret", registryCertSecret, "error", err)
+			helpers.Logger.Infow(
+				"Registry certificate secret not found, continuing without it",
+				"secret",
+				registryCertSecret,
+				"error",
+				err,
+			)
 		}
 	}
 
@@ -684,7 +705,11 @@ func deleteContainerImage(ctx context.Context, log logr.Logger, cluster *kuberne
 				InsecureSkipVerify: true, // nolint:gosec // Internal registry with self-signed cert
 				MinVersion:         tls.VersionTLS12,
 			}
-			log.Info("No registry certificate found, skipping TLS verification for internal registry", "registry", imageRegistryURL)
+			helpers.Logger.Infow(
+				"No registry certificate found, skipping TLS verification for internal registry",
+				"registry",
+				imageRegistryURL,
+			)
 		} else {
 			// External registry - use system cert pool (may fail if cert is not trusted)
 			tlsConfig = &tls.Config{
@@ -695,7 +720,7 @@ func deleteContainerImage(ctx context.Context, log logr.Logger, cluster *kuberne
 	}
 
 	// Delete the image
-	return registry.DeleteImage(ctx, log, imageURL, matchingCreds, tlsConfig)
+	return registry.DeleteImage(ctx, imageURL, matchingCreds, tlsConfig)
 }
 
 // deleteCacheStagePVC removes the kube PVC resource which was used to hold the application
@@ -961,10 +986,133 @@ are returned. If it is set, LogParameters represents the log filtering
 parameters.
 */
 type LogParameters struct {
-	Tail      *int64
-	Since     *time.Duration
-	SinceTime *time.Time
-	Follow    bool
+	Tail              *int64
+	Since             *time.Duration
+	SinceTime         *time.Time
+	Follow            bool
+	IncludeContainers []string // List of container names/patterns to include (regex patterns)
+	ExcludeContainers []string // List of container names/patterns to exclude (regex patterns)
+}
+
+// buildContainerIncludePattern builds the regex pattern for including containers.
+// Returns the pattern and whether the user specified an include filter.
+func buildContainerIncludePattern(logParams *LogParameters) (string, bool, error) {
+	containerQueryPattern := ".*"
+	hasUserIncludeFilter := false
+
+	if logParams == nil || len(logParams.IncludeContainers) == 0 {
+		return containerQueryPattern, hasUserIncludeFilter, nil
+	}
+
+	// Filter out any empty strings that might have slipped through
+	validIncludes := make([]string, 0, len(logParams.IncludeContainers))
+	for _, container := range logParams.IncludeContainers {
+		if trimmed := strings.TrimSpace(container); trimmed != "" {
+			validIncludes = append(validIncludes, trimmed)
+		}
+	}
+
+	if len(validIncludes) == 0 {
+		return "", false, fmt.Errorf("include_containers parameter contains no valid container names")
+	}
+
+	hasUserIncludeFilter = true
+
+	// Escape special regex characters and join with |
+	escapedIncludes := make([]string, len(validIncludes))
+	for i, container := range validIncludes {
+		// If the pattern already looks like a regex (contains special chars), use as-is
+		// Otherwise, treat as literal container name
+		if strings.ContainsAny(container, ".*+?^$|[]{}()\\") {
+			escapedIncludes[i] = container
+		} else {
+			// Escape as literal container name
+			escapedIncludes[i] = regexp.QuoteMeta(container)
+		}
+	}
+	containerQueryPattern = strings.Join(escapedIncludes, "|")
+
+	return containerQueryPattern, hasUserIncludeFilter, nil
+}
+
+// buildContainerExcludePattern builds the regex pattern for excluding containers.
+func buildContainerExcludePattern(logParams *LogParameters, hasUserIncludeFilter bool) (*regexp.Regexp, error) {
+	var excludeContainerPatterns []string
+
+	// Only apply default linkerd exclusion if user hasn't specified include_containers
+	// This allows users to explicitly include linkerd containers when needed
+	if !hasUserIncludeFilter {
+		excludeContainerPatterns = []string{"linkerd-(proxy|init)"}
+	}
+
+	// Add user-specified exclusions
+	if logParams != nil && len(logParams.ExcludeContainers) > 0 {
+		// Initialize if not already set (shouldn't happen, but be safe)
+		if excludeContainerPatterns == nil {
+			excludeContainerPatterns = []string{}
+		}
+		for _, container := range logParams.ExcludeContainers {
+			// Filter out empty strings
+			trimmed := strings.TrimSpace(container)
+			if trimmed == "" {
+				continue
+			}
+			// If the pattern already looks like a regex, use as-is
+			// Otherwise, treat as literal container name
+			if strings.ContainsAny(trimmed, ".*+?^$|[]{}()\\") {
+				excludeContainerPatterns = append(excludeContainerPatterns, trimmed)
+			} else {
+				// Escape as literal container name
+				excludeContainerPatterns = append(excludeContainerPatterns, regexp.QuoteMeta(trimmed))
+			}
+		}
+	}
+
+	// Build the final exclude pattern by combining all exclusions
+	if len(excludeContainerPatterns) > 0 {
+		// Combine all exclusion patterns with |
+		combinedExcludePattern := strings.Join(excludeContainerPatterns, "|")
+		excludeContainerQuery, err := regexp.Compile(combinedExcludePattern)
+		if err != nil {
+			return nil, fmt.Errorf("invalid exclude_containers pattern: %w", err)
+		}
+		return excludeContainerQuery, nil
+	}
+
+	// No exclusions (shouldn't happen with default, but handle gracefully)
+	return nil, nil
+}
+
+// applyLogParameters applies log filtering parameters to the tailer config.
+func applyLogParameters(config *tailer.Config, logParams *LogParameters) {
+	if logParams == nil {
+		return
+	}
+
+	helpers.Logger.Info("applying log parameters", "params", logParams)
+
+	// Handle line limiting
+	if logParams.Tail != nil {
+		config.TailLines = logParams.Tail
+		helpers.Logger.Info("applied tail parameter", "tail", *logParams.Tail)
+	}
+
+	// Handle time-based filtering
+	if logParams.SinceTime != nil {
+		config.SinceTime = logParams.SinceTime
+		helpers.Logger.Info(
+			"applying since time parameter | ",
+			"since_time: ",
+			*logParams.SinceTime,
+		)
+	} else if logParams.Since != nil {
+		config.Since = *logParams.Since
+		helpers.Logger.Info(
+			"applied since parameter | ",
+			"since: ",
+			*logParams.Since,
+		)
+	}
 }
 
 // then only logs from that staging process are returned.
@@ -978,7 +1126,6 @@ func Logs(
 	namespace string,
 	logParams *LogParameters,
 ) error {
-	logger := requestctx.Logger(ctx).WithName("logs-backend").V(2)
 	selector := labels.NewSelector()
 
 	var selectors [][]string
@@ -996,11 +1143,11 @@ func Logs(
 		}
 	}
 
-	for _, req := range selectors {
+	for _, selectorPair := range selectors {
 		req, err := labels.NewRequirement(
-			req[0],
+			selectorPair[0],
 			selection.Equals,
-			[]string{req[1]},
+			[]string{selectorPair[1]},
 		)
 		if err != nil {
 			return err
@@ -1008,9 +1155,26 @@ func Logs(
 		selector = selector.Add(*req)
 	}
 
+	// Build container filtering regex patterns
+	containerQueryPattern, hasUserIncludeFilter, err := buildContainerIncludePattern(logParams)
+	if err != nil {
+		return err
+	}
+
+	excludeContainerQuery, err := buildContainerExcludePattern(logParams, hasUserIncludeFilter)
+	if err != nil {
+		return err
+	}
+
+	// Compile the include pattern with error handling
+	containerQueryRegex, err := regexp.Compile(containerQueryPattern)
+	if err != nil {
+		return fmt.Errorf("invalid include_containers pattern: %w", err)
+	}
+
 	config := &tailer.Config{
-		ContainerQuery:        regexp.MustCompile(".*"),
-		ExcludeContainerQuery: regexp.MustCompile("linkerd-(proxy|init)"),
+		ContainerQuery:        containerQueryRegex,
+		ExcludeContainerQuery: excludeContainerQuery,
 		Exclude:               nil,
 		Include:               nil,
 		Timestamps:            true,
@@ -1028,29 +1192,26 @@ func Logs(
 	}
 
 	// Apply log parameters if provided
+	applyLogParameters(config, logParams)
 	if logParams != nil {
-		logger.Info("applying log parameters", "params", logParams)
+		helpers.Logger.Infow("applying log parameters", "params", logParams)
 
 		// Handle line limiting
 		if logParams.Tail != nil {
 			config.TailLines = logParams.Tail
-			logger.Info("applied tail parameter", "tail", *logParams.Tail)
+			helpers.Logger.Infow("applied tail parameter", "tail", *logParams.Tail)
 		}
 
 		// Handle time-based filtering
 		if logParams.SinceTime != nil {
 			config.SinceTime = logParams.SinceTime
-			helpers.Logger.Info(
-				"applying since time parameter | ",
-				"since_time: ",
-				*logParams.SinceTime,
+			helpers.Logger.Infow("applying since time parameter",
+				"since_time", *logParams.SinceTime,
 			)
 		} else if logParams.Since != nil {
 			config.Since = *logParams.Since
-			helpers.Logger.Info(
-				"applied since parameter | ",
-				"since: ",
-				*logParams.Since,
+			helpers.Logger.Infow("applied since parameter",
+				"since", *logParams.Since,
 			)
 		}
 	}
@@ -1062,11 +1223,11 @@ func Logs(
 	}
 
 	if follow {
-		logger.Info("stream")
+		helpers.Logger.Infow("stream")
 		return tailer.StreamLogs(ctx, logChan, wg, config, cluster)
 	}
 
-	logger.Info("fetch")
+	helpers.Logger.Infow("fetch")
 	return tailer.FetchLogs(ctx, logChan, wg, config, cluster)
 }
 

@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,15 +29,16 @@ import (
 	"github.com/epinio/epinio/internal/application"
 	apierror "github.com/epinio/epinio/pkg/api/core/v1/errors"
 	"github.com/gin-gonic/gin"
+	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 
 	"github.com/gorilla/websocket"
 )
 
-const (
+var (
 	// MaxTailLines is the maximum number of log lines that can be requested via the tail parameter
 	// This prevents excessive memory usage and ensures reasonable response times
-	MaxTailLines = 100000
+	MaxTailLines int64 = 100000
 )
 
 type LogParameterUpdate struct {
@@ -50,11 +52,21 @@ type LogParameterUpdate struct {
 }
 
 // ParseLogParameters parses and validates log query parameters
+// includeContainersStr and excludeContainersStr are optional parameters for container filtering
 func ParseLogParameters(
 	tailStr,
 	sinceStr,
 	sinceTimeStr string,
+	includeContainersStr ...string,
 ) (*application.LogParameters, error) {
+	var excludeContainersStr string
+	if len(includeContainersStr) > 1 {
+		excludeContainersStr = includeContainersStr[1]
+	}
+	var actualIncludeContainersStr string
+	if len(includeContainersStr) > 0 {
+		actualIncludeContainersStr = includeContainersStr[0]
+	}
 	params := &application.LogParameters{}
 
 	if tailStr != "" {
@@ -105,7 +117,115 @@ func ParseLogParameters(
 		}
 	}
 
+	// Parse container filtering parameters
+	if actualIncludeContainersStr != "" {
+		split := strings.Split(actualIncludeContainersStr, ",")
+		params.IncludeContainers = make([]string, 0, len(split))
+		for _, container := range split {
+			trimmed := strings.TrimSpace(container)
+			if trimmed != "" {
+				params.IncludeContainers = append(params.IncludeContainers, trimmed)
+			}
+		}
+	}
+
+	if excludeContainersStr != "" {
+		split := strings.Split(excludeContainersStr, ",")
+		params.ExcludeContainers = make([]string, 0, len(split))
+		for _, container := range split {
+			trimmed := strings.TrimSpace(container)
+			if trimmed != "" {
+				params.ExcludeContainers = append(params.ExcludeContainers, trimmed)
+			}
+		}
+	}
+
 	return params, nil
+}
+
+// validateContainerFilterPatterns validates that container filter patterns are valid regex
+// This is called before upgrading to websocket so errors can be returned as HTTP errors
+// Note: This mirrors the pattern building logic in application.Logs() to ensure consistency
+func validateContainerFilterPatterns(logParams *application.LogParameters) error {
+	if logParams == nil {
+		return nil
+	}
+
+	// Validate include_containers patterns
+	// Determine if user has specified include_containers (after filtering empty strings)
+	// This affects whether default exclusion is applied in validation
+	var hasUserIncludeFilter bool
+	if len(logParams.IncludeContainers) > 0 {
+		// Filter out empty strings and build pattern
+		validIncludes := make([]string, 0, len(logParams.IncludeContainers))
+		for _, container := range logParams.IncludeContainers {
+			if trimmed := strings.TrimSpace(container); trimmed != "" {
+				validIncludes = append(validIncludes, trimmed)
+			}
+		}
+
+		if len(validIncludes) == 0 {
+			// All containers were empty strings - this is an error
+			// Match the behavior in application.Logs()
+			return fmt.Errorf("include_containers parameter contains no valid container names")
+		}
+
+		// User has valid include filter
+		hasUserIncludeFilter = true
+
+		// Build pattern similar to application.Logs
+		escapedIncludes := make([]string, len(validIncludes))
+		for i, container := range validIncludes {
+			if strings.ContainsAny(container, ".*+?^$|[]{}()\\") {
+				escapedIncludes[i] = container
+			} else {
+				escapedIncludes[i] = regexp.QuoteMeta(container)
+			}
+		}
+		pattern := strings.Join(escapedIncludes, "|")
+		if _, err := regexp.Compile(pattern); err != nil {
+			return fmt.Errorf("invalid include_containers pattern: %w", err)
+		}
+	}
+
+	// Validate exclude_containers patterns
+	// Only include default exclusions if user hasn't specified include_containers
+	// This matches the behavior in application.Logs()
+	var excludePatterns []string
+	if !hasUserIncludeFilter {
+		excludePatterns = []string{"linkerd-(proxy|init)"}
+	}
+
+	if len(logParams.ExcludeContainers) > 0 {
+		if excludePatterns == nil {
+			excludePatterns = []string{}
+		}
+		for _, container := range logParams.ExcludeContainers {
+			trimmed := strings.TrimSpace(container)
+			if trimmed == "" {
+				continue
+			}
+			if strings.ContainsAny(trimmed, ".*+?^$|[]{}()\\") {
+				excludePatterns = append(excludePatterns, trimmed)
+			} else {
+				excludePatterns = append(excludePatterns, regexp.QuoteMeta(trimmed))
+			}
+		}
+	}
+
+	if len(excludePatterns) > 0 {
+		pattern := strings.Join(excludePatterns, "|")
+		if _, err := regexp.Compile(pattern); err != nil {
+			return fmt.Errorf("invalid exclude_containers pattern: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// ParseLogParametersForTest is a test helper that exposes ParseLogParameters for testing with container filters
+func ParseLogParametersForTest(tailStr, sinceStr, sinceTimeStr string, includeContainersStr, excludeContainersStr string) (*application.LogParameters, error) {
+	return ParseLogParameters(tailStr, sinceStr, sinceTimeStr, includeContainersStr, excludeContainersStr)
 }
 
 // Logs handles the API endpoints GET /namespaces/:namespace/applications/:app/logs
@@ -124,7 +244,7 @@ func Logs(c *gin.Context) {
 	appName := c.Param("app")
 	stageID := c.Param("stage_id")
 
-	helpers.Logger.Debug("get cluster client")
+	helpers.Logger.Debugw("get cluster client")
 	cluster, err := kubernetes.GetCluster(ctx)
 	if err != nil {
 		response.Error(c, apierror.InternalError(err))
@@ -132,7 +252,7 @@ func Logs(c *gin.Context) {
 	}
 
 	if appName != "" {
-		helpers.Logger.Debug("retrieve application", "name", appName, "namespace", namespace)
+		helpers.Logger.Debugw("retrieve application", "name", appName, "namespace", namespace)
 
 		app, err := application.Lookup(ctx, cluster, namespace, appName)
 		if err != nil {
@@ -166,16 +286,18 @@ func Logs(c *gin.Context) {
 		return
 	}
 
-	helpers.Logger.Debug("process query")
+	helpers.Logger.Debugw("process query")
 
 	// Extract query parameters
 	followStr := c.Query("follow")
 	tailStr := c.Query("tail")
 	sinceStr := c.Query("since")
 	sinceTimeStr := c.Query("since_time")
+	includeContainersStr := c.Query("include_containers")
+	excludeContainersStr := c.Query("exclude_containers")
 
 	// Parse and validate log parameters
-	logParams, err := ParseLogParameters(tailStr, sinceStr, sinceTimeStr)
+	logParams, err := ParseLogParameters(tailStr, sinceStr, sinceTimeStr, includeContainersStr, excludeContainersStr)
 	if err != nil {
 		response.Error(c, apierror.NewBadRequestError(err.Error()))
 		return
@@ -183,10 +305,14 @@ func Logs(c *gin.Context) {
 
 	// Set follow parameter
 	follow := followStr == "true"
-	if logParams == nil {
-		logParams = &application.LogParameters{}
-	}
 	logParams.Follow = follow
+
+	// Validate container filter regex patterns before upgrading to websocket
+	// This allows us to return HTTP errors instead of silently failing
+	if err := validateContainerFilterPatterns(logParams); err != nil {
+		response.Error(c, apierror.NewBadRequestError(err.Error()))
+		return
+	}
 
 	// Log the parsed parameters for debugging
 	helpers.Logger.Debug(
@@ -195,9 +321,11 @@ func Logs(c *gin.Context) {
 		"since: ", logParams.Since,
 		"since_time: ", logParams.SinceTime,
 		"follow: ", logParams.Follow,
-		"follow_raw: ", followStr)
+		"follow_raw: ", followStr,
+		"include_containers: ", logParams.IncludeContainers,
+		"exclude_containers: ", logParams.ExcludeContainers)
 
-	helpers.Logger.Debug("upgrade to web socket")
+	helpers.Logger.Debugw("upgrade to web socket")
 
 	var upgrader = newUpgrader()
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
@@ -206,8 +334,8 @@ func Logs(c *gin.Context) {
 		return
 	}
 
-	helpers.Logger.Debug("streaming mode", "follow", logParams.Follow)
-	helpers.Logger.Debug("streaming begin")
+	helpers.Logger.Debugw("streaming mode", "follow", logParams.Follow)
+	helpers.Logger.Debugw("streaming begin")
 
 	// Start streaming logs, if there is an error, return after logging it
 	err = streamPodLogs(
@@ -220,14 +348,14 @@ func Logs(c *gin.Context) {
 		logParams,
 	)
 	if err != nil {
-		helpers.Logger.Error(
-			err,
+		helpers.Logger.Errorw(
 			"error occurred after upgrading the websockets connection",
+			"error", err,
 		)
 		return
 	}
 
-	helpers.Logger.Debug("streaming completed")
+	helpers.Logger.Debugw("streaming completed")
 }
 
 /*
@@ -267,9 +395,9 @@ func streamPodLogs(
 					websocket.CloseNormalClosure,
 					websocket.CloseGoingAway,
 				) {
-					helpers.Logger.Debug("websocket closed normally")
+					helpers.Logger.Debugw("websocket closed normally")
 				} else {
-					helpers.Logger.Error(err, "error reading websocket message")
+					helpers.Logger.Errorw("error reading websocket message", "error", err)
 				}
 				logCancelFunc() // Stop log streaming
 				return
@@ -277,24 +405,33 @@ func streamPodLogs(
 
 			var update LogParameterUpdate
 			if err := json.Unmarshal(message, &update); err != nil {
-				helpers.Logger.Error(err, "failed to unmarshal parameter update")
+				helpers.Logger.Errorw("failed to unmarshal parameter update", "error", err)
 				continue
 			}
 
 			if update.Type == "filter_params" {
-				helpers.Logger.Debug(
-					"received parameter update | ",
-					"params: ",
-					update.Params,
+				helpers.Logger.Debugw("received parameter update",
+					"params", update.Params,
 				)
+
+				// Send marker directly to WebSocket to tell frontend to clear logs
+				// We do this BEFORE cancelling to ensure it arrives before any buffered messages
+				startMarker := tailer.ContainerLogLine{
+					Message:       "___FILTER_START___",
+					ContainerName: "",
+					PodName:       "",
+					Namespace:     "",
+					Timestamp:     "",
+				}
+				if msg, err := json.Marshal(startMarker); err == nil {
+					if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+						helpers.Logger.Error(err, "failed to send filter start marker")
+					}
+				}
 
 				// Cancel current log streaming
 				logCancelFunc()
 				logWg.Wait()
-
-				if len(logChan) > 0 {
-					<-logChan
-				}
 
 				// Start new streaming with updated parameters
 				logCtx, logCancelFunc = context.WithCancel(ctx)
@@ -308,15 +445,14 @@ func streamPodLogs(
 				)
 
 				if parsedParamsError != nil {
-					helpers.Logger.Error(
-						parsedParamsError,
-						"failed to parse updated log parameters",
+					helpers.Logger.Errorw("failed to parse updated log parameters",
+						"error", parsedParamsError,
 					)
 					continue
 				}
 
-				// Set follow to false for updates, as these are one-off requests
-				update.Params.Follow = false
+				// Use the follow parameter from the client
+				parsedParams.Follow = update.Params.Follow
 
 				logWg.Add(1)
 				go startLogStreaming(
@@ -353,10 +489,10 @@ func streamPodLogs(
 		close(logChan)
 	}()
 
-	helpers.Logger.Debug("stream copying begin")
+	helpers.Logger.Debugw("stream copying begin")
 
 	for logLine := range logChan {
-		helpers.Logger.Debug("streaming", "log line", logLine)
+		helpers.Logger.Debugw("streaming", "log line", logLine)
 
 		msg, err := json.Marshal(logLine)
 		if err != nil {
@@ -365,13 +501,41 @@ func streamPodLogs(
 
 		err = conn.WriteMessage(websocket.TextMessage, msg)
 		if err != nil {
-			helpers.Logger.Error(err, "failed to write to websockets")
+			helpers.Logger.Errorw("failed to write to websockets", "error", err)
 
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
 				return conn.Close()
 			}
 			if websocket.IsUnexpectedCloseError(err) {
-				helpers.Logger.Error(err, "websockets connection unexpectedly closed")
+				connectionCloseError := conn.Close()
+
+				if connectionCloseError != nil {
+					return connectionCloseError
+				}
+
+				helpers.Logger.Errorw(
+					"websockets connection unexpectedly closed",
+					"error",
+					err,
+				)
+				return nil
+			}
+
+			normalCloseErr := conn.WriteControl(
+				websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseNormalClosure,
+					"",
+				),
+				time.Time{},
+			)
+			if normalCloseErr != nil {
+				err = errors.Wrap(err, normalCloseErr.Error())
+			}
+
+			abnormalCloseErr := conn.Close()
+			if abnormalCloseErr != nil {
+				err = errors.Wrap(err, abnormalCloseErr.Error())
+				helpers.Logger.Errorw("websockets connection unexpectedly closed", "error", err)
 				return conn.Close()
 			}
 
@@ -379,8 +543,8 @@ func streamPodLogs(
 		}
 	}
 
-	helpers.Logger.Debug("stream copying done")
-	helpers.Logger.Debug("websocket teardown")
+	helpers.Logger.Debugw("stream copying done")
+	helpers.Logger.Debugw("websocket teardown")
 
 	if err := conn.WriteControl(
 		websocket.CloseMessage,
@@ -407,7 +571,7 @@ func startLogStreaming(
 ) {
 
 	defer func() {
-		helpers.Logger.Info("backend ends")
+		helpers.Logger.Infow("backend ends")
 
 		// Indicate end of log stream if not following
 		if !logParams.Follow {
@@ -423,16 +587,11 @@ func startLogStreaming(
 		wg.Done()
 	}()
 
-	helpers.Logger.Debug(
-		"create backend | ",
-		"follow: ",
-		logParams.Follow,
-		"app: ",
-		appName,
-		"stage: ",
-		stageID,
-		"namespace: ",
-		namespaceName,
+	helpers.Logger.Debugw("create backend",
+		"follow", logParams.Follow,
+		"app", appName,
+		"stage", stageID,
+		"namespace", namespaceName,
 	)
 
 	var tailWg sync.WaitGroup
@@ -447,10 +606,10 @@ func startLogStreaming(
 		logParams,
 	)
 	if err != nil {
-		helpers.Logger.Error(err, "setting up log routines failed")
+		helpers.Logger.Errorw("setting up log routines failed", "error", err)
 	}
 
-	helpers.Logger.Debug("wait for backend completion")
+	helpers.Logger.Debugw("wait for backend completion")
 	tailWg.Wait()
 }
 
