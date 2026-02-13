@@ -104,18 +104,18 @@ func (m *Machine) SetupNamespace(namespace string) {
 	EventuallyWithOffset(1, func() error {
 		out, err := m.Epinio("", "namespace", "create", namespace)
 		if err != nil && !strings.Contains(out, "already exists") {
-			fmt.Fprintf(GinkgoWriter, "[SetupNamespace] namespace create failed namespace=%s err=%v out=%s\n", namespace, err, out)
+			_, _ = fmt.Fprintf(GinkgoWriter, "[SetupNamespace] namespace create failed namespace=%s err=%v out=%s\n", namespace, err, out)
 			return errors.New(out)
 		}
 
 		out, err = m.Epinio("", "namespace", "show", namespace)
 		if err != nil {
-			fmt.Fprintf(GinkgoWriter, "[SetupNamespace] namespace show failed namespace=%s err=%v out=%s\n", namespace, err, out)
+			_, _ = fmt.Fprintf(GinkgoWriter, "[SetupNamespace] namespace show failed namespace=%s err=%v out=%s\n", namespace, err, out)
 			return errors.New(out)
 		}
 
 		if !strings.Contains(out, namespace) {
-			fmt.Fprintf(GinkgoWriter, "[SetupNamespace] namespace show output missing namespace=%s out=%s\n", namespace, out)
+			_, _ = fmt.Fprintf(GinkgoWriter, "[SetupNamespace] namespace show output missing namespace=%s out=%s\n", namespace, out)
 			return errors.New(out)
 		}
 
@@ -128,13 +128,13 @@ func (m *Machine) TargetNamespace(namespace string) {
 
 	out, err := m.Epinio(m.nodeTmpDir, "target", namespace)
 	if err != nil {
-		fmt.Fprintf(GinkgoWriter, "[TargetNamespace] epinio target %s failed: err=%v out=%s\n", namespace, err, out)
+		_, _ = fmt.Fprintf(GinkgoWriter, "[TargetNamespace] epinio target %s failed: err=%v out=%s\n", namespace, err, out)
 	}
 	ExpectWithOffset(1, err).ToNot(HaveOccurred(), "epinio target %s: out=%s", namespace, out)
 
 	out, err = m.Epinio(m.nodeTmpDir, "target")
 	if err != nil {
-		fmt.Fprintf(GinkgoWriter, "[TargetNamespace] epinio target (show) failed: err=%v out=%s\n", err, out)
+		_, _ = fmt.Fprintf(GinkgoWriter, "[TargetNamespace] epinio target (show) failed: err=%v out=%s\n", err, out)
 	}
 	ExpectWithOffset(1, err).ToNot(HaveOccurred(), out)
 	ExpectWithOffset(1, out).To(MatchRegexp("Currently targeted namespace: "+namespace), "target output should show current namespace; got out=%s", out)
