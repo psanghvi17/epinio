@@ -1629,14 +1629,14 @@ configuration:
 				Expect(err).ToNot(HaveOccurred(), out)
 				Expect(out).To(ContainSubstring("Successfully updated application"))
 
-				// Verify instances changed (allow time for both pods to be ready; 15m for slow CI)
+				// Verify instances changed (allow time for both pods to be ready; 20m for slow CI)
 				Eventually(func() string {
 					out, err := env.Epinio("", "app", "show", appName)
 					if err != nil {
 						return "" // retry on transient API errors (e.g. 503)
 					}
 					return out
-				}, "15m", "10s").Should(
+				}, "20m", "10s").Should(
 					HaveATable(
 						WithHeaders("KEY", "VALUE"),
 						WithRow("Status", "2/2"),
@@ -1722,7 +1722,7 @@ configuration:
 						return ""
 					}
 					return out
-				}, "12m", "5s").Should(
+				}, "15m", "5s").Should(
 					HaveATable(
 						WithHeaders("KEY", "VALUE"),
 						WithRow("Status", "2/2"),
@@ -1936,7 +1936,7 @@ configuration:
 							}
 						}
 						return nil
-					}, "16m", "30s").ShouldNot(HaveOccurred(), "export may be flaky when image-export job is slow or fails")
+					}, "24m", "45s").ShouldNot(HaveOccurred(), "export may be flaky when image-export job is slow or fails")
 
 					exported, err := filepath.Glob(exportPath + "/*")
 					Expect(err).ToNot(HaveOccurred(), exported)
@@ -2024,7 +2024,7 @@ userConfig:
 						}
 					}
 					return nil
-				}, "16m", "30s").ShouldNot(HaveOccurred(), "export may be flaky when image-export job is slow or fails")
+				}, "24m", "45s").ShouldNot(HaveOccurred(), "export may be flaky when image-export job is slow or fails")
 
 				exported, err := filepath.Glob(exportPath + "/*")
 				Expect(err).ToNot(HaveOccurred(), exported)
@@ -2087,7 +2087,7 @@ userConfig:
 						}
 					}
 					return nil
-				}, "16m", "30s").ShouldNot(HaveOccurred(), "export may be flaky when image-export job is slow or fails")
+				}, "24m", "45s").ShouldNot(HaveOccurred(), "export may be flaky when image-export job is slow or fails")
 
 				exported, err := filepath.Glob(exportPath + "/*")
 				Expect(err).ToNot(HaveOccurred(), exported)

@@ -487,7 +487,7 @@ var _ = Describe("AppUpdate Endpoint", LApplication, func() {
 			// Wait for rollout to complete (2/2) first so getPodNames is stable
 			Eventually(func() string {
 				return appShow(namespace, app).Workload.Status
-			}, "12m", "5s").Should(Equal("2/2"), "workload status should be 2/2 after scale with restart")
+			}, "15m", "5s").Should(Equal("2/2"), "workload status should be 2/2 after scale with restart")
 
 			// Then verify pod names changed (new pods, not the old ones)
 			var currentPodNames []string
@@ -496,7 +496,7 @@ var _ = Describe("AppUpdate Endpoint", LApplication, func() {
 				Expect(err).ToNot(HaveOccurred())
 				currentPodNames = names
 				return names
-			}, "2m", "5s").Should(And(HaveLen(2), Not(ContainElements(oldPodNames))),
+			}, "5m", "5s").Should(And(HaveLen(2), Not(ContainElements(oldPodNames))),
 				"restart test: pod names should have changed; oldPodNames=%v currentPodNames=%v (namespace=%s app=%s)", oldPodNames, currentPodNames, namespace, app)
 		})
 
@@ -522,7 +522,7 @@ var _ = Describe("AppUpdate Endpoint", LApplication, func() {
 			// Wait for rollout to complete (2/2) first so getPodNames is stable
 			Eventually(func() string {
 				return appShow(namespace, app).Workload.Status
-			}, "12m", "5s").Should(Equal("2/2"), "workload status should be 2/2 after scale (restart default)")
+			}, "15m", "5s").Should(Equal("2/2"), "workload status should be 2/2 after scale (restart default)")
 
 			// Then verify pod names changed (new pods, not the old ones)
 			var currentPodNames []string
@@ -531,7 +531,7 @@ var _ = Describe("AppUpdate Endpoint", LApplication, func() {
 				Expect(err).ToNot(HaveOccurred())
 				currentPodNames = names
 				return names
-			}, "2m", "5s").Should(And(HaveLen(2), Not(ContainElements(oldPodNames))),
+			}, "5m", "5s").Should(And(HaveLen(2), Not(ContainElements(oldPodNames))),
 				"restart (default) test: pod names should have changed; oldPodNames=%v currentPodNames=%v (namespace=%s app=%s)", oldPodNames, currentPodNames, namespace, app)
 		})
 

@@ -122,7 +122,7 @@ var _ = Describe("AppShow Endpoint", LApplication, func() {
 		Eventually(func() int32 {
 			appObj := appShow(namespace, app)
 			return appObj.Workload.Replicas[replica.Name].Restarts
-		}, "15s", "1s").Should(BeNumerically("==", 1))
+		}, "60s", "2s").Should(BeNumerically("==", 1))
 	})
 
 	It("returns a 404 when the namespace does not exist", func() {

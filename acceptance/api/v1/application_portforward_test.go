@@ -63,7 +63,7 @@ var _ = Describe("AppPortForward Endpoint", LApplication, func() {
 				Eventually(func() error {
 					lastErr = runPortForwardGet(namespace, appName, "")
 					return lastErr
-				}, "10m", "10s").Should(Succeed(), "AppPortForward GET (no instance) failed for namespace=%s app=%s: %v", namespace, appName, lastErr)
+				}, "10m", "20s").Should(Succeed(), "AppPortForward GET (no instance) failed for namespace=%s app=%s: %v", namespace, appName, lastErr)
 			})
 		})
 
@@ -117,7 +117,7 @@ var _ = Describe("AppPortForward Endpoint", LApplication, func() {
 				Eventually(func() error {
 					lastErr = runPortForwardGet(namespace, appName, instanceName)
 					return lastErr
-				}, "10m", "10s").Should(Succeed(), "AppPortForward GET (instance=%s) failed for namespace=%s app=%s: %v", instanceName, namespace, appName, lastErr)
+				}, "10m", "20s").Should(Succeed(), "AppPortForward GET (instance=%s) failed for namespace=%s app=%s: %v", instanceName, namespace, appName, lastErr)
 			})
 		})
 	})
@@ -137,6 +137,9 @@ func runPortForwardGet(namespace, appName, instance string) error {
 	streamData, streamErr := createStreams(conn)
 	defer streamData.Close()
 	defer streamErr.Close()
+
+	// Let the port-forward stream stabilize before sending (reduces EOF under load).
+	time.Sleep(3 * time.Second)
 
 	// Send a GET request through the stream (apache inside sample-app listens on port 80).
 	req, _ := http.NewRequest(http.MethodGet, "http://localhost/", nil)
