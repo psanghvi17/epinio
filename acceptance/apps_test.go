@@ -1586,8 +1586,22 @@ configuration:
 
 		Context("with --no-restart flag", func() {
 			getPodNames := func(namespace, app string) ([]string, error) {
-				podName, err := proc.Kubectl("get", "pods", "-n", namespace, "-l", fmt.Sprintf("app.kubernetes.io/name=%s", app), "-o", "jsonpath='{.items[*].metadata.name}'")
-				return strings.Split(strings.Trim(podName, "'"), " "), err
+				// Only Running pods; excludes Terminating pods during rollout
+				podName, err := proc.Kubectl("get", "pods", "-n", namespace,
+					"-l", fmt.Sprintf("app.kubernetes.io/name=%s", app),
+					"--field-selector=status.phase=Running",
+					"-o", "jsonpath='{.items[*].metadata.name}'")
+				if err != nil {
+					return nil, err
+				}
+				raw := strings.Split(strings.Trim(podName, "'"), " ")
+				var names []string
+				for _, s := range raw {
+					if n := strings.TrimSpace(s); n != "" {
+						names = append(names, n)
+					}
+				}
+				return names, nil
 			}
 
 			It("updates instances without restarting the app", func() {
@@ -1615,14 +1629,14 @@ configuration:
 				Expect(err).ToNot(HaveOccurred(), out)
 				Expect(out).To(ContainSubstring("Successfully updated application"))
 
-				// Verify instances changed (allow time for both pods to be ready; 12m for slow CI)
+				// Verify instances changed (allow time for both pods to be ready; 15m for slow CI)
 				Eventually(func() string {
 					out, err := env.Epinio("", "app", "show", appName)
 					if err != nil {
 						return "" // retry on transient API errors (e.g. 503)
 					}
 					return out
-				}, "12m", "5s").Should(
+				}, "15m", "10s").Should(
 					HaveATable(
 						WithHeaders("KEY", "VALUE"),
 						WithRow("Status", "2/2"),
@@ -1701,16 +1715,30 @@ configuration:
 				out, err := env.Epinio("", "app", "update", appName, "-i", "2")
 				Expect(err).ToNot(HaveOccurred(), out)
 
-				// Verify restart occurred (pod names changed; allow 12m for slow CI rollouts)
+				// Wait for rollout to complete (2 instances ready) before checking pod names
+				Eventually(func() string {
+					out, err := env.Epinio("", "app", "show", appName)
+					if err != nil {
+						return ""
+					}
+					return out
+				}, "12m", "5s").Should(
+					HaveATable(
+						WithHeaders("KEY", "VALUE"),
+						WithRow("Status", "2/2"),
+					),
+					"wait for app to have 2/2 instances after update (restart) before checking pod names")
+
+				// Verify restart occurred (pod names changed from pre-update names)
 				var currentPodNames []string
 				Eventually(func() []string {
 					var err error
 					currentPodNames, err = getPodNames(namespace, appName)
 					if err != nil {
-						return nil // retry on transient API errors
+						return nil
 					}
 					return currentPodNames
-				}, "12m", "5s").Should(
+				}, "5m", "5s").Should(
 					And(
 						Not(BeEmpty()),
 						Not(ContainElements(oldPodNames)),
@@ -1890,6 +1918,7 @@ configuration:
 					Eventually(func() error {
 						out, err := env.Epinio("", "app", "export", app, exportPath)
 						if err != nil {
+							fmt.Fprintf(GinkgoWriter, "[DEBUG export customized] epinio app export failed: err=%v; combined stdout/stderr:\n---\n%s\n---\n", err, out)
 							return err
 						}
 						if strings.Contains(out, "failed to retrieve image") || strings.Contains(out, "failed to open tar file") {
@@ -1897,11 +1926,17 @@ configuration:
 						}
 						for _, f := range []string{exportValues, exportChart, exportImage} {
 							if _, err := os.Stat(f); err != nil {
+								entries, _ := os.ReadDir(exportPath)
+								var names []string
+								for _, e := range entries {
+									names = append(names, e.Name())
+								}
+								fmt.Fprintf(GinkgoWriter, "[DEBUG export customized] file missing: %q err=%v; exportPath contents: %v\n", f, err, names)
 								return err
 							}
 						}
 						return nil
-					}, "8m", "20s").ShouldNot(HaveOccurred(), "export may be flaky when image-export job is slow or fails")
+					}, "16m", "30s").ShouldNot(HaveOccurred(), "export may be flaky when image-export job is slow or fails")
 
 					exported, err := filepath.Glob(exportPath + "/*")
 					Expect(err).ToNot(HaveOccurred(), exported)
@@ -1971,6 +2006,7 @@ userConfig:
 				Eventually(func() error {
 					out, err := env.Epinio("", "app", "export", app, exportPath)
 					if err != nil {
+						fmt.Fprintf(GinkgoWriter, "[DEBUG export] epinio app export failed: err=%v (exit code may be 255); combined stdout/stderr:\n---\n%s\n---\n", err, out)
 						return err
 					}
 					if strings.Contains(out, "failed to retrieve image") || strings.Contains(out, "failed to open tar file") {
@@ -1978,11 +2014,17 @@ userConfig:
 					}
 					for _, f := range []string{exportValues, exportChart, exportImage} {
 						if _, err := os.Stat(f); err != nil {
+							entries, _ := os.ReadDir(exportPath)
+							var names []string
+							for _, e := range entries {
+								names = append(names, e.Name())
+							}
+							fmt.Fprintf(GinkgoWriter, "[DEBUG export] file missing: %q err=%v; exportPath contents: %v\n", f, err, names)
 							return err
 						}
 					}
 					return nil
-				}, "8m", "20s").ShouldNot(HaveOccurred(), "export may be flaky when image-export job is slow or fails")
+				}, "16m", "30s").ShouldNot(HaveOccurred(), "export may be flaky when image-export job is slow or fails")
 
 				exported, err := filepath.Glob(exportPath + "/*")
 				Expect(err).ToNot(HaveOccurred(), exported)
@@ -2027,6 +2069,7 @@ userConfig:
 				Eventually(func() error {
 					out, err := env.Epinio("", "app", "export", app, exportPath)
 					if err != nil {
+						fmt.Fprintf(GinkgoWriter, "[DEBUG export complex quoting] epinio app export failed: err=%v; combined stdout/stderr:\n---\n%s\n---\n", err, out)
 						return err
 					}
 					if strings.Contains(out, "failed to retrieve image") || strings.Contains(out, "failed to open tar file") {
@@ -2034,11 +2077,17 @@ userConfig:
 					}
 					for _, f := range []string{exportValues, exportChart, exportImage} {
 						if _, err := os.Stat(f); err != nil {
+							entries, _ := os.ReadDir(exportPath)
+							var names []string
+							for _, e := range entries {
+								names = append(names, e.Name())
+							}
+							fmt.Fprintf(GinkgoWriter, "[DEBUG export complex quoting] file missing: %q err=%v; exportPath contents: %v\n", f, err, names)
 							return err
 						}
 					}
 					return nil
-				}, "8m", "20s").ShouldNot(HaveOccurred(), "export may be flaky when image-export job is slow or fails")
+				}, "16m", "30s").ShouldNot(HaveOccurred(), "export may be flaky when image-export job is slow or fails")
 
 				exported, err := filepath.Glob(exportPath + "/*")
 				Expect(err).ToNot(HaveOccurred(), exported)

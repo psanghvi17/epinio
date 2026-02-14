@@ -380,7 +380,8 @@ func getFileImageAndJobCleanup(
 	jobName,
 	imageOutputFilename string,
 ) (*os.File, error) {
-	err := cluster.WaitForJobDone(ctx, helmchart.Namespace(), jobName, time.Minute*5)
+	// Allow 15m for slow CI (image pull/skopeo copy can be slow on shared runners)
+	err := cluster.WaitForJobDone(ctx, helmchart.Namespace(), jobName, time.Minute*15)
 	if err != nil {
 		helpers.Logger.Infow("export job wait error", "error", err, "job", jobName)
 

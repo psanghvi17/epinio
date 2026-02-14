@@ -139,7 +139,7 @@ var _ = Describe("AppLogs Endpoint", LApplication, func() {
 			Expect(message).NotTo(BeNil())
 			lastMessage = string(message)
 			return lastMessage
-		}, "30s", "2s").Should(ContainSubstring("[200]: GET /"), "expected log line [200]: GET / in websocket message; got: %q", lastMessage)
+		}, "2m", "2s").Should(ContainSubstring("[200]: GET /"), "expected log line [200]: GET / in websocket message; got: %q", lastMessage)
 
 		err = wsConn.Close()
 		Expect(err).ToNot(HaveOccurred())

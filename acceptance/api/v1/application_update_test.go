@@ -484,20 +484,20 @@ var _ = Describe("AppUpdate Endpoint", LApplication, func() {
 			bodyBytes, statusCode := appUpdate(namespace, app, toJSON(request))
 			Expect(statusCode).To(Equal(http.StatusOK), "appUpdate response: status=%d body=%s", statusCode, string(bodyBytes))
 
-			// Verify restart occurred (pod names changed); allow 12m for very slow rollouts in CI
+			// Wait for rollout to complete (2/2) first so getPodNames is stable
+			Eventually(func() string {
+				return appShow(namespace, app).Workload.Status
+			}, "12m", "5s").Should(Equal("2/2"), "workload status should be 2/2 after scale with restart")
+
+			// Then verify pod names changed (new pods, not the old ones)
 			var currentPodNames []string
 			Eventually(func() []string {
 				names, err := getPodNames(namespace, app)
 				Expect(err).ToNot(HaveOccurred())
 				currentPodNames = names
 				return names
-			}, "12m", "5s").ShouldNot(ContainElements(oldPodNames),
+			}, "2m", "5s").Should(And(HaveLen(2), Not(ContainElements(oldPodNames))),
 				"restart test: pod names should have changed; oldPodNames=%v currentPodNames=%v (namespace=%s app=%s)", oldPodNames, currentPodNames, namespace, app)
-
-			// Verify instances eventually match
-			Eventually(func() string {
-				return appShow(namespace, app).Workload.Status
-			}, "1m").Should(Equal("2/2"))
 		})
 
 		It("restarts by default when restart parameter is omitted (backward compatibility)", func() {
@@ -519,20 +519,20 @@ var _ = Describe("AppUpdate Endpoint", LApplication, func() {
 			bodyBytes, statusCode := appUpdate(namespace, app, toJSON(request))
 			Expect(statusCode).To(Equal(http.StatusOK), "appUpdate response: status=%d body=%s", statusCode, string(bodyBytes))
 
-			// Verify restart occurred (default behavior); allow 12m for very slow rollouts in CI
+			// Wait for rollout to complete (2/2) first so getPodNames is stable
+			Eventually(func() string {
+				return appShow(namespace, app).Workload.Status
+			}, "12m", "5s").Should(Equal("2/2"), "workload status should be 2/2 after scale (restart default)")
+
+			// Then verify pod names changed (new pods, not the old ones)
 			var currentPodNames []string
 			Eventually(func() []string {
 				names, err := getPodNames(namespace, app)
 				Expect(err).ToNot(HaveOccurred())
 				currentPodNames = names
 				return names
-			}, "12m", "5s").ShouldNot(ContainElements(oldPodNames),
+			}, "2m", "5s").Should(And(HaveLen(2), Not(ContainElements(oldPodNames))),
 				"restart (default) test: pod names should have changed; oldPodNames=%v currentPodNames=%v (namespace=%s app=%s)", oldPodNames, currentPodNames, namespace, app)
-
-			// Verify instances eventually match
-			Eventually(func() string {
-				return appShow(namespace, app).Workload.Status
-			}, "1m").Should(Equal("2/2"), "workload status should be 2/2 after scale")
 		})
 
 		It("does not restart when restart is false and updating environment", func() {
