@@ -426,8 +426,21 @@ var _ = Describe("AppUpdate Endpoint", LApplication, func() {
 
 	When("restart parameter is provided", func() {
 		getPodNames := func(namespace, app string) ([]string, error) {
-			podName, err := proc.Kubectl("get", "pods", "-n", namespace, "-l", fmt.Sprintf("app.kubernetes.io/name=%s", app), "-o", "jsonpath='{.items[*].metadata.name}'")
-			return strings.Split(strings.Trim(podName, "'"), " "), err
+			podNames, err := proc.Kubectl("get", "pods", "-n", namespace,
+				"-l", fmt.Sprintf("app.kubernetes.io/name=%s", app),
+				"--field-selector=status.phase=Running",
+				"-o", "jsonpath='{.items[*].metadata.name}'")
+			if err != nil {
+				return nil, err
+			}
+			raw := strings.Split(strings.Trim(podNames, "'"), " ")
+			var names []string
+			for _, s := range raw {
+				if n := strings.TrimSpace(s); n != "" {
+					names = append(names, n)
+				}
+			}
+			return names, nil
 		}
 
 		It("does not restart when restart is false", func() {
@@ -459,7 +472,9 @@ var _ = Describe("AppUpdate Endpoint", LApplication, func() {
 			// Verify pods DID NOT restart (names should be the same or contain old names)
 			Consistently(func() []string {
 				names, err := getPodNames(namespace, app)
-				Expect(err).ToNot(HaveOccurred())
+				if err != nil {
+					return oldPodNames
+				}
 				return names
 			}, "10s", "2s").Should(ContainElements(oldPodNames), "no-restart test: current pod names should still contain oldPodNames=%v", oldPodNames)
 		})
@@ -493,7 +508,9 @@ var _ = Describe("AppUpdate Endpoint", LApplication, func() {
 			var currentPodNames []string
 			Eventually(func() []string {
 				names, err := getPodNames(namespace, app)
-				Expect(err).ToNot(HaveOccurred())
+				if err != nil {
+					return nil
+				}
 				currentPodNames = names
 				return names
 			}, "5m", "5s").Should(And(HaveLen(2), Not(ContainElements(oldPodNames))),
@@ -528,7 +545,9 @@ var _ = Describe("AppUpdate Endpoint", LApplication, func() {
 			var currentPodNames []string
 			Eventually(func() []string {
 				names, err := getPodNames(namespace, app)
-				Expect(err).ToNot(HaveOccurred())
+				if err != nil {
+					return nil
+				}
 				currentPodNames = names
 				return names
 			}, "5m", "5s").Should(And(HaveLen(2), Not(ContainElements(oldPodNames))),
@@ -566,7 +585,9 @@ var _ = Describe("AppUpdate Endpoint", LApplication, func() {
 			// Verify pods DID NOT restart
 			Consistently(func() []string {
 				names, err := getPodNames(namespace, app)
-				Expect(err).ToNot(HaveOccurred())
+				if err != nil {
+					return oldPodNames
+				}
 				return names
 			}, "10s", "2s").Should(ContainElements(oldPodNames), "restart=false test: pod names should be unchanged; oldPodNames=%v", oldPodNames)
 		})

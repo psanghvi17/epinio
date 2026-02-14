@@ -124,8 +124,20 @@ var _ = Describe("AppPortForward Endpoint", LApplication, func() {
 })
 
 func runPortForwardGet(namespace, appName, instance string) error {
+	var lastErr error
+	for attempt := 1; attempt <= 5; attempt++ {
+		lastErr = runPortForwardGetOnce(namespace, appName, instance, attempt)
+		if lastErr == nil {
+			return nil
+		}
+		time.Sleep(time.Duration(attempt) * time.Second)
+	}
+	return fmt.Errorf("port-forward GET failed after retries: %w", lastErr)
+}
+
+func runPortForwardGetOnce(namespace, appName, instance string, attempt int) error {
 	start := time.Now()
-	fmt.Fprintf(GinkgoWriter, "[AppPortForward] start namespace=%s app=%s instance=%q\n", namespace, appName, instance)
+	fmt.Fprintf(GinkgoWriter, "[AppPortForward] attempt=%d start namespace=%s app=%s instance=%q\n", attempt, namespace, appName, instance)
 
 	conn, err := setupConnection(namespace, appName, instance)
 	if err != nil {

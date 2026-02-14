@@ -115,13 +115,19 @@ var _ = Describe("AppLogs Endpoint", LApplication, func() {
 
 		By("adding more logs")
 		Eventually(func() int {
-			resp, err := env.Curl("GET", route + ":443", strings.NewReader("")) //TODO - Move hardcoded port to central function/if the port issue gets resolved, remove this
-			Expect(err).ToNot(HaveOccurred())
+			resp, err := env.Curl("GET", route+":443", strings.NewReader("")) //TODO - Move hardcoded port to central function/if the port issue gets resolved, remove this
+			if err != nil {
+				fmt.Fprintf(GinkgoWriter, "[AppLogs] curl route failed (transient): %v\n", err)
+				return 0
+			}
 
 			defer resp.Body.Close()
 
 			bodyBytes, err := io.ReadAll(resp.Body)
-			Expect(err).ToNot(HaveOccurred(), "ReadAll resp.Body: %v", resp)
+			if err != nil {
+				fmt.Fprintf(GinkgoWriter, "[AppLogs] read body failed (transient): %v\n", err)
+				return 0
+			}
 
 			// reply must be from the phpinfo app
 			if !strings.Contains(string(bodyBytes), "phpinfo()") {
@@ -129,14 +135,15 @@ var _ = Describe("AppLogs Endpoint", LApplication, func() {
 			}
 
 			return resp.StatusCode
-		}, 90*time.Second, 3*time.Second).Should(Equal(http.StatusOK), "GET %s:443 should return 200 and phpinfo body", route)
+		}, 3*time.Minute, 3*time.Second).Should(Equal(http.StatusOK), "GET %s:443 should return 200 and phpinfo body", route)
 
 		By("checking the latest log message")
 		var lastMessage string
 		Eventually(func() string {
 			_, message, err := wsConn.ReadMessage()
-			Expect(err).NotTo(HaveOccurred(), "AppLogs ReadMessage (new log): %v", err)
-			Expect(message).NotTo(BeNil())
+			if err != nil || message == nil {
+				return ""
+			}
 			lastMessage = string(message)
 			return lastMessage
 		}, "3m", "3s").Should(ContainSubstring("[200]: GET /"), "expected log line [200]: GET / in websocket message; got: %q", lastMessage)

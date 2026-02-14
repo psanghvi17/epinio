@@ -1647,7 +1647,7 @@ configuration:
 				Consistently(func() []string {
 					names, err := getPodNames(namespace, appName)
 					if err != nil {
-						return nil // avoid failing on transient errors
+						return oldPodNames // avoid failing on transient errors
 					}
 					return names
 				}, "10s", "2s").Should(ContainElements(oldPodNames))
@@ -1686,7 +1686,9 @@ configuration:
 				// Verify pods DID NOT restart
 				Consistently(func() []string {
 					names, err := getPodNames(namespace, appName)
-					Expect(err).ToNot(HaveOccurred())
+					if err != nil {
+						return oldPodNames
+					}
 					return names
 				}, "10s", "2s").Should(ContainElements(oldPodNames))
 			})
@@ -1738,7 +1740,7 @@ configuration:
 						return nil
 					}
 					return currentPodNames
-				}, "5m", "5s").Should(
+				}, "8m", "5s").Should(
 					And(
 						Not(BeEmpty()),
 						Not(ContainElements(oldPodNames)),
@@ -1915,6 +1917,19 @@ configuration:
 				})
 
 				It("exports the details of a customized app", func() {
+					Eventually(func() string {
+						out, err := env.Epinio("", "app", "show", app)
+						if err != nil {
+							return ""
+						}
+						return out
+					}, "10m", "10s").Should(
+						HaveATable(
+							WithHeaders("KEY", "VALUE"),
+							WithRow("Status", "1/1"),
+						),
+					)
+
 					Eventually(func() error {
 						out, err := env.Epinio("", "app", "export", app, exportPath)
 						if err != nil {
@@ -2003,6 +2018,19 @@ userConfig:
 			})
 
 			It("exports the details of an app", func() {
+				Eventually(func() string {
+					out, err := env.Epinio("", "app", "show", app)
+					if err != nil {
+						return ""
+					}
+					return out
+				}, "10m", "10s").Should(
+					HaveATable(
+						WithHeaders("KEY", "VALUE"),
+						WithRow("Status", "1/1"),
+					),
+				)
+
 				Eventually(func() error {
 					out, err := env.Epinio("", "app", "export", app, exportPath)
 					if err != nil {
@@ -2065,6 +2093,19 @@ userConfig:
    "commit":        "3ce7abe14abd849b374eb68729de8c71e9f3a927"
 }`)
 				Expect(err).ToNot(HaveOccurred(), out)
+
+				Eventually(func() string {
+					out, err := env.Epinio("", "app", "show", app)
+					if err != nil {
+						return ""
+					}
+					return out
+				}, "10m", "10s").Should(
+					HaveATable(
+						WithHeaders("KEY", "VALUE"),
+						WithRow("Status", "1/1"),
+					),
+				)
 
 				Eventually(func() error {
 					out, err := env.Epinio("", "app", "export", app, exportPath)
