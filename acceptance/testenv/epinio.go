@@ -168,9 +168,16 @@ func AppRouteWithPort(route string) string {
 	if regexp.MustCompile(`:\d+/?($|\?)`).MatchString(route) {
 		return route
 	}
-	// Add port before any path
-	if idx := strings.Index(route, "/"); idx > 0 {
-		return route[:idx] + ":" + port + route[idx:]
+	// Insert port after hostname (after "://" and up to path or end)
+	schemeEnd := strings.Index(route, "://")
+	if schemeEnd < 0 {
+		return route + ":" + port
 	}
-	return route + ":" + port
+	hostStart := schemeEnd + 3 // after "://"
+	pathIdx := strings.Index(route[hostStart:], "/")
+	if pathIdx < 0 {
+		return route + ":" + port
+	}
+	insertAt := hostStart + pathIdx
+	return route[:insertAt] + ":" + port + route[insertAt:]
 }

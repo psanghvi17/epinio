@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -100,17 +101,31 @@ func (m *Machine) EpinioPush(dir string, name string, arg ...string) (string, er
 func (m *Machine) SetupNamespace(namespace string) {
 	By(fmt.Sprintf("creating a namespace: %s", namespace))
 
+	var attempt int
 	// Namespace creation can race with internal secret propagation on busy CI nodes.
 	EventuallyWithOffset(1, func() error {
+		attempt++
+		_, _ = fmt.Fprintf(GinkgoWriter, "[SetupNamespace] attempt %d namespace=%s\n", attempt, namespace)
+
+		t0 := time.Now()
 		out, err := m.Epinio("", "namespace", "create", namespace)
+		elapsedCreate := time.Since(t0)
 		if err != nil && !strings.Contains(out, "already exists") {
-			_, _ = fmt.Fprintf(GinkgoWriter, "[SetupNamespace] namespace create failed namespace=%s err=%v out=%s\n", namespace, err, out)
+			_, _ = fmt.Fprintf(GinkgoWriter, "[SetupNamespace] namespace create failed namespace=%s err=%v elapsed=%v out=%s\n", namespace, err, elapsedCreate, out)
+			if strings.Contains(out, "EOF") || strings.Contains(out, "making the request") {
+				_, _ = fmt.Fprintf(GinkgoWriter, "[SetupNamespace] root cause: API connection closed (EOF) or request failed before response - often under parallel load\n")
+			}
 			return errors.New(out)
 		}
 
+		t1 := time.Now()
 		out, err = m.Epinio("", "namespace", "show", namespace)
+		elapsedShow := time.Since(t1)
 		if err != nil {
-			_, _ = fmt.Fprintf(GinkgoWriter, "[SetupNamespace] namespace show failed namespace=%s err=%v out=%s\n", namespace, err, out)
+			_, _ = fmt.Fprintf(GinkgoWriter, "[SetupNamespace] namespace show failed namespace=%s err=%v elapsed=%v out=%s\n", namespace, err, elapsedShow, out)
+			if strings.Contains(out, "EOF") || strings.Contains(out, "making the request") {
+				_, _ = fmt.Fprintf(GinkgoWriter, "[SetupNamespace] root cause: API connection closed (EOF) - often under parallel load\n")
+			}
 			return errors.New(out)
 		}
 
@@ -119,8 +134,9 @@ func (m *Machine) SetupNamespace(namespace string) {
 			return errors.New(out)
 		}
 
+		_, _ = fmt.Fprintf(GinkgoWriter, "[SetupNamespace] success attempt=%d namespace=%s create=%v show=%v\n", attempt, namespace, elapsedCreate, elapsedShow)
 		return nil
-	}, "4m", "5s").Should(Succeed(), "SetupNamespace failed for namespace=%s (check logs above for create/show errors)", namespace)
+	}, "6m", "5s").Should(Succeed(), "SetupNamespace failed for namespace=%s (check logs above for create/show errors)", namespace)
 }
 
 func (m *Machine) TargetNamespace(namespace string) {

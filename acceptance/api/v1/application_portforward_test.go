@@ -124,9 +124,12 @@ var _ = Describe("AppPortForward Endpoint", LApplication, func() {
 })
 
 func runPortForwardGet(namespace, appName, instance string) error {
+	start := time.Now()
+	fmt.Fprintf(GinkgoWriter, "[AppPortForward] start namespace=%s app=%s instance=%q\n", namespace, appName, instance)
+
 	conn, err := setupConnection(namespace, appName, instance)
 	if err != nil {
-		fmt.Fprintf(GinkgoWriter, "[AppPortForward] setupConnection failed namespace=%s app=%s instance=%q: %v\n", namespace, appName, instance, err)
+		fmt.Fprintf(GinkgoWriter, "[AppPortForward] setupConnection failed after %v: %v\n", time.Since(start), err)
 		return fmt.Errorf("setupConnection: %w", err)
 	}
 	defer conn.Close()
@@ -138,14 +141,16 @@ func runPortForwardGet(namespace, appName, instance string) error {
 	// Send a GET request through the stream (apache inside sample-app listens on port 80).
 	req, _ := http.NewRequest(http.MethodGet, "http://localhost/", nil)
 	if err = req.Write(streamData); err != nil {
-		fmt.Fprintf(GinkgoWriter, "[AppPortForward] req.Write failed: %v\n", err)
+		fmt.Fprintf(GinkgoWriter, "[AppPortForward] req.Write failed after %v: %v\n", time.Since(start), err)
 		return fmt.Errorf("req.Write: %w", err)
 	}
 
+	fmt.Fprintf(GinkgoWriter, "[AppPortForward] ReadResponse attempt (elapsed %v) namespace=%s app=%s\n", time.Since(start), namespace, appName)
 	reader := bufio.NewReader(streamData)
 	resp, err := http.ReadResponse(reader, req)
 	if err != nil {
-		fmt.Fprintf(GinkgoWriter, "[AppPortForward] ReadResponse failed (often EOF under load): %v\n", err)
+		fmt.Fprintf(GinkgoWriter, "[AppPortForward] ReadResponse failed after %v (often EOF under load): %v\n", time.Since(start), err)
+		fmt.Fprintf(GinkgoWriter, "[AppPortForward] root cause: stream closed before HTTP response - server may have closed connection or is under load\n")
 		return fmt.Errorf("ReadResponse: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
