@@ -108,7 +108,7 @@ func (m *Machine) SetupNamespace(namespace string) {
 		_, _ = fmt.Fprintf(GinkgoWriter, "[SetupNamespace] attempt %d namespace=%s\n", attempt, namespace)
 
 		t0 := time.Now()
-		out, err := m.Epinio("", "namespace", "create", namespace)
+		out, err := m.Epinio(m.nodeTmpDir, "namespace", "create", namespace)
 		elapsedCreate := time.Since(t0)
 		if err != nil && !strings.Contains(out, "already exists") {
 			_, _ = fmt.Fprintf(GinkgoWriter, "[SetupNamespace] namespace create failed namespace=%s err=%v elapsed=%v out=%s\n", namespace, err, elapsedCreate, out)
@@ -119,7 +119,7 @@ func (m *Machine) SetupNamespace(namespace string) {
 		}
 
 		t1 := time.Now()
-		out, err = m.Epinio("", "namespace", "show", namespace)
+		out, err = m.Epinio(m.nodeTmpDir, "namespace", "show", namespace)
 		elapsedShow := time.Since(t1)
 		if err != nil {
 			_, _ = fmt.Fprintf(GinkgoWriter, "[SetupNamespace] namespace show failed namespace=%s err=%v elapsed=%v out=%s\n", namespace, err, elapsedShow, out)
@@ -166,7 +166,7 @@ func (m *Machine) DeleteNamespace(namespace string) {
 
 	By(fmt.Sprintf("deleting a namespace: %s", namespace))
 
-	out, err := m.Epinio("", "namespace", "delete", "-f", namespace)
+	out, err := m.Epinio(m.nodeTmpDir, "namespace", "delete", "-f", namespace)
 	Expect(err).ToNot(HaveOccurred(), out)
 
 	out, err = proc.Kubectl("get", "namespace", namespace)
@@ -176,7 +176,7 @@ func (m *Machine) DeleteNamespace(namespace string) {
 
 func (m *Machine) VerifyNamespaceNotExist(namespace string) {
 	EventuallyWithOffset(1, func() string {
-		out, err := m.Epinio("", "namespace", "list")
+		out, err := m.Epinio(m.nodeTmpDir, "namespace", "list")
 		ExpectWithOffset(1, err).ToNot(HaveOccurred(), out)
 		return out
 	}, "2m").ShouldNot(MatchRegexp(namespace))
