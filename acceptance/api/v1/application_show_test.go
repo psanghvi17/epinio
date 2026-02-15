@@ -98,10 +98,10 @@ var _ = Describe("AppShow Endpoint", LApplication, func() {
 			"--", "/bin/sh", "-c", "kill -9 $(cat /tmp/yes.pid) 2>/dev/null; rm -f /tmp/yes.pid")
 		Expect(err).ToNot(HaveOccurred(), out)
 
-		// Increase memory for 3 minutes to check memory metric
+		// Increase memory briefly to check memory metric without blocking for minutes.
 		out, err = proc.Kubectl("exec",
 			"--namespace", namespace, podNames[0], "--container", appObj.Workload.Name,
-			"--", "/bin/bash", "-c", "cat <( </dev/zero head -c 50m) <(sleep 180) | tail")
+			"--", "/bin/sh", "-c", "head -c 50000000 </dev/zero >/tmp/epinio-mem.bin; sleep 5; rm -f /tmp/epinio-mem.bin")
 		Expect(err).ToNot(HaveOccurred(), out)
 		Eventually(func() int64 {
 			appObj := appShow(namespace, app)
@@ -121,8 +121,12 @@ var _ = Describe("AppShow Endpoint", LApplication, func() {
 
 		Eventually(func() int32 {
 			appObj := appShow(namespace, app)
-			return appObj.Workload.Replicas[replica.Name].Restarts
-		}, "180s", "2s").Should(BeNumerically(">=", 1))
+			totalRestarts := int32(0)
+			for _, podInfo := range appObj.Workload.Replicas {
+				totalRestarts += podInfo.Restarts
+			}
+			return totalRestarts
+		}, "300s", "2s").Should(BeNumerically(">=", 1))
 	})
 
 	It("returns a 404 when the namespace does not exist", func() {

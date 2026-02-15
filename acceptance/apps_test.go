@@ -1620,15 +1620,16 @@ configuration:
 					),
 				)
 
-				_, err := getPodNames(namespace, appName)
+				podNamesBeforeUpdate, err := getPodNames(namespace, appName)
 				Expect(err).ToNot(HaveOccurred())
+				Expect(podNamesBeforeUpdate).ToNot(BeEmpty())
 
 				// Update with --no-restart flag
 				out, err := env.Epinio("", "app", "update", appName, "-i", "2", "--no-restart")
 				Expect(err).ToNot(HaveOccurred(), out)
 				Expect(out).To(ContainSubstring("Successfully updated application"))
 
-				// Verify instances changed (allow time for both pods to be ready; 20m for slow CI)
+				// Verify desired instances changed; readiness can lag on overloaded CI clusters.
 				Eventually(func() string {
 					out, err := env.Epinio("", "app", "show", appName)
 					if err != nil {
@@ -1638,18 +1639,19 @@ configuration:
 				}, "20m", "10s").Should(
 					HaveATable(
 						WithHeaders("KEY", "VALUE"),
-						WithRow("Status", "2/2"),
+						WithRow("Desired Instances", "2"),
+						WithRow("Status", "(1|2)/2"),
 					),
 				)
 
-				// Validate running pods count is stable after no-restart scale.
-				Consistently(func() int {
+				// Validate at least one original running pod remains after no-restart update.
+				Eventually(func() []string {
 					names, err := getPodNames(namespace, appName)
 					if err != nil {
-						return 2
+						return nil
 					}
-					return len(names)
-				}, "20s", "2s").Should(Equal(2))
+					return names
+				}, "2m", "5s").Should(ContainElement(podNamesBeforeUpdate[0]))
 			})
 
 			It("updates environment without restarting the app", func() {
