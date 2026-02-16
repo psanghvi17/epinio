@@ -114,8 +114,9 @@ var _ = Describe("AppShow Endpoint", LApplication, func() {
 		}, "10s", "1s").Should(BeNumerically("==", 0))
 
 		// Disrupt the running pod and verify the workload recovers.
+		podNameForDelete := strings.TrimPrefix(podNames[0], "pod/")
 		out, err = proc.Kubectl("delete", "pod",
-			"--namespace", namespace, podNames[0])
+			"--namespace", namespace, podNameForDelete)
 		Expect(err).ToNot(HaveOccurred(), out)
 
 		Eventually(func() string {
