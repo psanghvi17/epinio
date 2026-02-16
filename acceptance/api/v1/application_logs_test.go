@@ -117,7 +117,7 @@ var _ = Describe("AppLogs Endpoint", LApplication, func() {
 		routeHit := false
 		deadline := time.Now().Add(3 * time.Minute)
 		for time.Now().Before(deadline) && !routeHit {
-			resp, err := env.Curl("GET", route+":443", strings.NewReader("")) //TODO - Move hardcoded port to central function/if the port issue gets resolved, remove this
+			resp, err := env.Curl("GET", testenv.AppRouteWithPort(route), strings.NewReader(""))
 			if err != nil {
 				fmt.Fprintf(GinkgoWriter, "[AppLogs] curl route failed (transient): %v\n", err)
 				time.Sleep(3 * time.Second)

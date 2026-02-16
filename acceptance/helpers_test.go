@@ -14,12 +14,14 @@ package acceptance_test
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/epinio/epinio/acceptance/helpers/auth"
 	. "github.com/epinio/epinio/acceptance/helpers/matchers"
+	"github.com/epinio/epinio/acceptance/testenv"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -27,10 +29,25 @@ import (
 
 func ExpectGoodUserLogin(tmpSettingsPath, password, serverURL string) string {
 	By("Regular login")
-	out, err := env.Epinio("", "login", "-u", "epinio", "-p", password,
-		"--trust-ca", "--settings-file", tmpSettingsPath, serverURL+":8443")
+	loginURL := testenv.AppRouteWithPort(serverURL)
+	waitForServerReady(loginURL)
 
-	Expect(err).ToNot(HaveOccurred())
+	var out string
+	Eventually(func() bool {
+		var err error
+		out, err = env.Epinio("", "login", "-u", "epinio", "-p", password,
+			"--trust-ca", "--settings-file", tmpSettingsPath, loginURL)
+		if err == nil {
+			return true
+		}
+		if isTransientConnectFailure(out) {
+			fmt.Fprintf(GinkgoWriter, "[ExpectGoodUserLogin] transient login failure at %s: %v\n%s\n", loginURL, err, out)
+			return false
+		}
+		Fail(fmt.Sprintf("login failed unexpectedly at %s: %v\n%s", loginURL, err, out))
+		return false
+	}, "2m", "3s").Should(BeTrue(), out)
+
 	Expect(out).To(ContainSubstring(`Login to your Epinio cluster`))
 	Expect(out).To(ContainSubstring(`Trusting certificate`))
 	Expect(out).To(ContainSubstring(`Login successful`))
@@ -41,10 +58,12 @@ func ExpectGoodUserLogin(tmpSettingsPath, password, serverURL string) string {
 
 func ExpectGoodTokenLogin(tmpSettingsPath, serverURL string) {
 	By("OIDC login")
+	loginURL := testenv.AppRouteWithPort(serverURL)
+	waitForServerReady(loginURL)
 
 	out := &bytes.Buffer{}
 	cmd := env.EpinioCmd("login", "--prompt", "--oidc",
-		"--trust-ca", "--settings-file", tmpSettingsPath, serverURL)
+		"--trust-ca", "--settings-file", tmpSettingsPath, loginURL)
 	cmd.Stdout = out
 	cmd.Stderr = out
 
@@ -75,6 +94,9 @@ func ExpectGoodTokenLogin(tmpSettingsPath, serverURL string) {
 
 		select {
 		case runErr := <-iscomplete:
+			if runErr != nil {
+				fmt.Fprintf(GinkgoWriter, "[ExpectGoodTokenLogin] login command exited early at %s: %v\n%s\n", loginURL, runErr, fullOutput)
+			}
 			Expect(runErr).ToNot(HaveOccurred(), fullOutput)
 			return "finished"
 		default:
@@ -121,6 +143,36 @@ func ExpectGoodTokenLogin(tmpSettingsPath, serverURL string) {
 	// after the command terminates check that the login was successful
 	Expect(out.String()).To(ContainSubstring(`Login successful`))
 	By("OIDC login done")
+}
+
+func waitForServerReady(serverURL string) {
+	readyURL := strings.TrimSuffix(serverURL, "/") + "/ready"
+	By("Waiting for API readiness: " + readyURL)
+	Eventually(func() bool {
+		resp, err := env.Curl("GET", readyURL, nil)
+		if err != nil {
+			fmt.Fprintf(GinkgoWriter, "[waitForServerReady] curl error %s: %v\n", readyURL, err)
+			return false
+		}
+		if resp != nil {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}
+		if resp == nil || resp.StatusCode != 200 {
+			if resp != nil {
+				fmt.Fprintf(GinkgoWriter, "[waitForServerReady] non-200 %s: %d\n", readyURL, resp.StatusCode)
+			}
+			return false
+		}
+		return true
+	}, "2m", "3s").Should(BeTrue(), "API never became ready at %s", readyURL)
+}
+
+func isTransientConnectFailure(out string) bool {
+	l := strings.ToLower(out)
+	return strings.Contains(l, "connect: connection refused") ||
+		strings.Contains(l, "error while checking ca") ||
+		strings.Contains(l, "dial tcp")
 }
 
 func ExpectEmptySettings(tmpSettingsPath string) {

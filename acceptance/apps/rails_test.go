@@ -183,14 +183,18 @@ var _ = Describe("RubyOnRails", func() {
 
 		route := testenv.AppRouteFromOutput(out)
 		Expect(route).ToNot(BeEmpty())
+		route = testenv.AppRouteWithPort(route)
 
 		Eventually(func() int {
-			resp, err := env.Curl("GET", route+":443", strings.NewReader(""))
-			Expect(err).ToNot(HaveOccurred())
+			resp, err := env.Curl("GET", route, strings.NewReader(""))
+			if err != nil {
+				fmt.Fprintf(GinkgoWriter, "[rails] transient route check failure for %s: %v\n", route, err)
+				return 0
+			}
 			return resp.StatusCode
 		}, 60*time.Second, 1*time.Second).Should(Equal(http.StatusOK))
 
-		resp, err := env.Curl("GET", route+":443", strings.NewReader(""))
+		resp, err := env.Curl("GET", route, strings.NewReader(""))
 		Expect(err).ToNot(HaveOccurred())
 		defer resp.Body.Close()
 		bodyBytes, err := io.ReadAll(resp.Body)

@@ -602,7 +602,7 @@ jobs:
           scripts/collect-coverage.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: acceptance-api-apps
+          name: acceptance-api-apps-oldest-k3s
           path: ./coverprofile.out
 
       - name: Cleanup k3d cluster
@@ -767,6 +767,12 @@ jobs:
           # install certmanager, epinio, and other resources
           make install-cert-manager
           make prepare_environment_k3d
+          # Ensure API/ingress is ready before route-dependent app tests
+          kubectl wait --for=condition=available deployment/epinio-server -n epinio --timeout=120s
+          for i in $(seq 1 12); do
+            curl -sk -o /dev/null -w "%{http_code}" "https://epinio.127.0.0.1.sslip.io:8443/ready" | grep -q 200 && break
+            sleep 10
+          done
           make test-acceptance-apps
           scripts/collect-coverage.sh
 
