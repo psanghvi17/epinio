@@ -16,6 +16,7 @@ package namespaces
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/epinio/epinio/helpers/kubernetes"
 	"github.com/epinio/epinio/internal/duration"
@@ -116,8 +117,41 @@ func Create(ctx context.Context, kubeClient *kubernetes.Cluster, namespace strin
 		return errors.Wrap(err, "failed to create a service account for apps")
 	}
 
-	if _, err := kubeClient.WaitForSecret(ctx, namespace, "registry-creds", duration.ToSecretCopied()); err != nil {
-		return errors.Wrap(err, "timed out while waiting for registry-creds secret to be copied to the new namespace")
+	// Do not tie secret propagation to the client request context. Under CI load,
+	// client-side timeouts can cancel the request while Kubernetes controllers are
+	// still propagating the secret.
+	waitCtx, cancel := context.WithTimeout(context.Background(), duration.ToSecretCopied())
+	defer cancel()
+	if _, err := kubeClient.WaitForSecret(waitCtx, namespace, "registry-creds", duration.ToSecretCopied()); err != nil {
+		sourceSecretState := "unknown"
+		targetSecretState := "unknown"
+		serviceAccountPullSecrets := "unknown"
+
+		if _, getErr := kubeClient.Kubectl.CoreV1().Secrets("epinio").Get(ctx, registry.CredentialsSecretName, metav1.GetOptions{}); getErr == nil {
+			sourceSecretState = "present"
+		} else if apierrors.IsNotFound(getErr) {
+			sourceSecretState = "missing"
+		} else {
+			sourceSecretState = fmt.Sprintf("error: %v", getErr)
+		}
+
+		if _, getErr := kubeClient.Kubectl.CoreV1().Secrets(namespace).Get(ctx, registry.CredentialsSecretName, metav1.GetOptions{}); getErr == nil {
+			targetSecretState = "present"
+		} else if apierrors.IsNotFound(getErr) {
+			targetSecretState = "missing"
+		} else {
+			targetSecretState = fmt.Sprintf("error: %v", getErr)
+		}
+
+		if sa, saErr := kubeClient.Kubectl.CoreV1().ServiceAccounts(namespace).Get(ctx, namespace, metav1.GetOptions{}); saErr == nil {
+			serviceAccountPullSecrets = fmt.Sprintf("%v", sa.ImagePullSecrets)
+		} else {
+			serviceAccountPullSecrets = fmt.Sprintf("error: %v", saErr)
+		}
+
+		return errors.Wrapf(err,
+			"timed out while waiting for registry-creds secret to be copied to the new namespace (diag: sourceSecret=%s targetSecret=%s serviceAccountImagePullSecrets=%s)",
+			sourceSecretState, targetSecretState, serviceAccountPullSecrets)
 	}
 
 	return nil

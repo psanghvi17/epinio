@@ -134,6 +134,17 @@ func (m *Machine) SetupNamespace(namespace string) {
 			return errors.New(out)
 		}
 
+		// Ensure the namespace has the propagated registry credentials secret
+		// before considering setup complete. This prevents later app push
+		// failures on clusters where secret propagation lags.
+		t2 := time.Now()
+		secretOut, secretErr := proc.Kubectl("get", "secret", "registry-creds", "-n", namespace, "-o", "name")
+		elapsedSecret := time.Since(t2)
+		if secretErr != nil || !strings.Contains(secretOut, "registry-creds") {
+			_, _ = fmt.Fprintf(GinkgoWriter, "[SetupNamespace] registry-creds not ready namespace=%s err=%v elapsed=%v out=%s\n", namespace, secretErr, elapsedSecret, secretOut)
+			return errors.New("registry-creds secret not ready yet")
+		}
+
 		_, _ = fmt.Fprintf(GinkgoWriter, "[SetupNamespace] success attempt=%d namespace=%s create=%v show=%v\n", attempt, namespace, elapsedCreate, elapsedShow)
 		return nil
 	}, "6m", "5s").Should(Succeed(), "SetupNamespace failed for namespace=%s (check logs above for create/show errors)", namespace)
