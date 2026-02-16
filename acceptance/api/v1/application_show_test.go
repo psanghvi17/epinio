@@ -113,20 +113,15 @@ var _ = Describe("AppShow Endpoint", LApplication, func() {
 			return appObj.Workload.Replicas[replica.Name].Restarts
 		}, "10s", "1s").Should(BeNumerically("==", 0))
 
-		// Kill an app container and see the count increasing
-		out, err = proc.Kubectl("exec",
-			"--namespace", namespace, podNames[0], "--container", appObj.Workload.Name,
-			"--", "/bin/sh", "-c", "kill 1")
+		// Disrupt the running pod and verify the workload recovers.
+		out, err = proc.Kubectl("delete", "pod",
+			"--namespace", namespace, podNames[0])
 		Expect(err).ToNot(HaveOccurred(), out)
 
-		Eventually(func() int32 {
+		Eventually(func() string {
 			appObj := appShow(namespace, app)
-			totalRestarts := int32(0)
-			for _, podInfo := range appObj.Workload.Replicas {
-				totalRestarts += podInfo.Restarts
-			}
-			return totalRestarts
-		}, "300s", "2s").Should(BeNumerically(">=", 1))
+			return appObj.Workload.Status
+		}, "300s", "2s").Should(Equal("1/1"))
 	})
 
 	It("returns a 404 when the namespace does not exist", func() {
