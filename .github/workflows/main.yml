@@ -830,6 +830,7 @@ jobs:
       - name: Upload unittests coverage to Codecov
         uses: codecov/codecov-action@v3
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
           name: codecov-epinio
           files: ./unittests/coverprofile.out
           flags: unittests
@@ -839,6 +840,7 @@ jobs:
       - name: Upload acceptance-api coverage to Codecov
         uses: codecov/codecov-action@v3
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
           name: codecov-epinio
           files: ./acceptance-api/coverprofile.out,./acceptance-api-apps/coverprofile.out,./acceptance-api-services/coverprofile.out
           flags: acceptance-api
@@ -848,6 +850,7 @@ jobs:
       - name: Upload acceptance-cli coverage to Codecov
         uses: codecov/codecov-action@v3
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
           name: codecov-epinio
           files: ./acceptance-cli/coverprofile.out,./acceptance-cli-apps/coverprofile.out,./acceptance-cli-services/coverprofile.out
           flags: acceptance-cli
@@ -857,6 +860,7 @@ jobs:
       - name: Upload acceptance-apps coverage to Codecov
         uses: codecov/codecov-action@v3
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
           name: codecov-epinio
           files: ./acceptance-apps/coverprofile.out
           flags: acceptance-apps
