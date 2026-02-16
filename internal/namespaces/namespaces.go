@@ -123,11 +123,13 @@ func Create(ctx context.Context, kubeClient *kubernetes.Cluster, namespace strin
 	waitCtx, cancel := context.WithTimeout(context.Background(), duration.ToSecretCopied())
 	defer cancel()
 	if _, err := kubeClient.WaitForSecret(waitCtx, namespace, "registry-creds", duration.ToSecretCopied()); err != nil {
-		sourceSecretState := "unknown"
-		targetSecretState := "unknown"
-		serviceAccountPullSecrets := "unknown"
+		var sourceSecretState string
+		var targetSecretState string
+		var serviceAccountPullSecrets string
+		var getErr error
 
-		if _, getErr := kubeClient.Kubectl.CoreV1().Secrets("epinio").Get(ctx, registry.CredentialsSecretName, metav1.GetOptions{}); getErr == nil {
+		_, getErr = kubeClient.Kubectl.CoreV1().Secrets("epinio").Get(ctx, registry.CredentialsSecretName, metav1.GetOptions{})
+		if getErr == nil {
 			sourceSecretState = "present"
 		} else if apierrors.IsNotFound(getErr) {
 			sourceSecretState = "missing"
@@ -135,7 +137,8 @@ func Create(ctx context.Context, kubeClient *kubernetes.Cluster, namespace strin
 			sourceSecretState = fmt.Sprintf("error: %v", getErr)
 		}
 
-		if _, getErr := kubeClient.Kubectl.CoreV1().Secrets(namespace).Get(ctx, registry.CredentialsSecretName, metav1.GetOptions{}); getErr == nil {
+		_, getErr = kubeClient.Kubectl.CoreV1().Secrets(namespace).Get(ctx, registry.CredentialsSecretName, metav1.GetOptions{})
+		if getErr == nil {
 			targetSecretState = "present"
 		} else if apierrors.IsNotFound(getErr) {
 			targetSecretState = "missing"
@@ -143,7 +146,8 @@ func Create(ctx context.Context, kubeClient *kubernetes.Cluster, namespace strin
 			targetSecretState = fmt.Sprintf("error: %v", getErr)
 		}
 
-		if sa, saErr := kubeClient.Kubectl.CoreV1().ServiceAccounts(namespace).Get(ctx, namespace, metav1.GetOptions{}); saErr == nil {
+		sa, saErr := kubeClient.Kubectl.CoreV1().ServiceAccounts(namespace).Get(ctx, namespace, metav1.GetOptions{})
+		if saErr == nil {
 			serviceAccountPullSecrets = fmt.Sprintf("%v", sa.ImagePullSecrets)
 		} else {
 			serviceAccountPullSecrets = fmt.Sprintf("error: %v", saErr)
