@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/epinio/epinio/acceptance/helpers/auth"
 	. "github.com/epinio/epinio/acceptance/helpers/matchers"
@@ -50,7 +51,7 @@ func ExpectGoodTokenLogin(tmpSettingsPath, serverURL string) {
 	stdinPipe, err := cmd.StdinPipe()
 	Expect(err).ToNot(HaveOccurred())
 
-	iscomplete := make(chan error)
+	iscomplete := make(chan error, 1)
 
 	// run the epinio login and wait for the input of the authCode
 	go func() {
@@ -62,15 +63,24 @@ func ExpectGoodTokenLogin(tmpSettingsPath, serverURL string) {
 		iscomplete <- err
 	}()
 
-	// read the full output, until the command asks you to paste the auth code
+	// Read output until prompt appears, but fail fast if login exits early.
 	By("Waiting for auth code query")
-	for {
-		if strings.Contains(out.String(), "paste the authorization code") {
-			break
+	var fullOutput string
+	Eventually(func() string {
+		fullOutput = out.String()
+		lower := strings.ToLower(fullOutput)
+		if strings.Contains(lower, "authorization code") {
+			return "prompted"
 		}
-	}
 
-	fullOutput := out.String()
+		select {
+		case runErr := <-iscomplete:
+			Expect(runErr).ToNot(HaveOccurred(), fullOutput)
+			return "finished"
+		default:
+			return "waiting"
+		}
+	}, "2m", "200ms").Should(Equal("prompted"), fullOutput)
 
 	Expect(fullOutput).To(ContainSubstring(`Login to your Epinio cluster`))
 	Expect(fullOutput).To(ContainSubstring(`Trusting certificate`))
@@ -101,7 +111,11 @@ func ExpectGoodTokenLogin(tmpSettingsPath, serverURL string) {
 	Expect(err).ToNot(HaveOccurred())
 
 	By("Waiting for login completion")
-	err = <-iscomplete
+	select {
+	case err = <-iscomplete:
+	case <-time.After(2 * time.Minute):
+		Fail(fmt.Sprintf("timed out waiting for login completion. Output so far:\n%s", out.String()))
+	}
 	Expect(err).ToNot(HaveOccurred(), out.String())
 
 	// after the command terminates check that the login was successful
