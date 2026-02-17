@@ -145,7 +145,7 @@ var _ = Describe("AppLogs Endpoint", LApplication, func() {
 			}
 		}
 		if !routeHit {
-			Skip("Skipping follow-log assertion due transient route unavailability in CI")
+			Fail("follow-log assertion failed: app route did not become reachable after retries")
 		}
 
 		By("checking the latest log message")

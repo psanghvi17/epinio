@@ -351,9 +351,7 @@ var _ = Describe("Apps", LApplication, func() {
 			})
 
 			It("pushes the app when providing a proper token", func() {
-				if os.Getenv("PRIVATE_REPO_IMPORT_PAT") == "" {
-					Skip("PRIVATE_REPO_IMPORT_PAT not set; skipping private repo push test")
-				}
+				Expect(os.Getenv("PRIVATE_REPO_IMPORT_PAT")).ToNot(BeEmpty(), "PRIVATE_REPO_IMPORT_PAT not set; this test requires a private repo token")
 
 				env.MakeGitconfig(catalog.NewGitconfigName())
 
@@ -1037,7 +1035,7 @@ var _ = Describe("Apps", LApplication, func() {
 
 			It("is using the cache PVC", func() {
 				pvcName := names.GenerateResourceName(namespace, appName)
-				// Wait for build cache PVC to appear (staging may create it asynchronously); skip if not present (e.g. CI without cache)
+				// Wait for build cache PVC to appear (staging may create it asynchronously).
 				var found bool
 				for deadline := time.Now().Add(2 * time.Minute); time.Now().Before(deadline); time.Sleep(5 * time.Second) {
 					_, err := proc.Kubectl("get", "pvc", "--namespace", testenv.Namespace, pvcName)
@@ -1046,9 +1044,7 @@ var _ = Describe("Apps", LApplication, func() {
 						break
 					}
 				}
-				if !found {
-					Skip("build cache PVC not present in this environment after waiting 2m")
-				}
+				Expect(found).To(BeTrue(), "build cache PVC %q was not present in namespace %q after waiting 2m", pvcName, testenv.Namespace)
 
 				out, err := push()
 				Expect(err).ToNot(HaveOccurred(), out)
@@ -1059,7 +1055,7 @@ var _ = Describe("Apps", LApplication, func() {
 		When("deleting the app", func() {
 			It("deletes the cache PVC too", func() {
 				pvcName := names.GenerateResourceName(namespace, appName)
-				// Wait for build cache PVC to appear; skip if not present (e.g. CI without cache)
+				// Wait for build cache PVC to appear.
 				var found bool
 				for deadline := time.Now().Add(2 * time.Minute); time.Now().Before(deadline); time.Sleep(5 * time.Second) {
 					_, err := proc.Kubectl("get", "pvc", "--namespace", testenv.Namespace, pvcName)
@@ -1068,9 +1064,7 @@ var _ = Describe("Apps", LApplication, func() {
 						break
 					}
 				}
-				if !found {
-					Skip("build cache PVC not present in this environment after waiting 2m")
-				}
+				Expect(found).To(BeTrue(), "build cache PVC %q was not present in namespace %q after waiting 2m", pvcName, testenv.Namespace)
 				env.DeleteApp(appName)
 
 				out, err := proc.Kubectl("get", "pvc", "--namespace", testenv.Namespace, pvcName)
@@ -1910,7 +1904,6 @@ configuration:
 				})
 
 				It("exports the details of a customized app", func() {
-					var infraExportErr bool
 					Eventually(func() string {
 						out, err := env.Epinio("", "app", "show", app)
 						if err != nil {
@@ -1928,17 +1921,9 @@ configuration:
 						out, err := env.Epinio("", "app", "export", app, exportPath)
 						if err != nil {
 							fmt.Fprintf(GinkgoWriter, "[DEBUG export customized] epinio app export failed: err=%v; combined stdout/stderr:\n---\n%s\n---\n", err, out)
-							if strings.Contains(out, "skopeo copy did not produce the tar file") || strings.Contains(out, "failed waiting for job completion: image export job failed") {
-								infraExportErr = true
-								return nil
-							}
-							return err
+							return fmt.Errorf("export command failed: %w; output: %s", err, out)
 						}
 						if strings.Contains(out, "failed to retrieve image") || strings.Contains(out, "failed to open tar file") {
-							if strings.Contains(out, "skopeo copy did not produce the tar file") || strings.Contains(out, "failed waiting for job completion: image export job failed") {
-								infraExportErr = true
-								return nil
-							}
 							return fmt.Errorf("export failed: %s", out)
 						}
 						for _, f := range []string{exportValues, exportChart, exportImage} {
@@ -1953,10 +1938,7 @@ configuration:
 							}
 						}
 						return nil
-					}, "24m", "45s").ShouldNot(HaveOccurred(), "export may be flaky when image-export job is slow or fails")
-					if infraExportErr {
-						Skip("Skipping due to known infra image-export instability (skopeo tarball generation)")
-					}
+					}, "24m", "45s").ShouldNot(HaveOccurred(), "export failed")
 
 					exported, err := filepath.Glob(exportPath + "/*")
 					Expect(err).ToNot(HaveOccurred(), exported)
@@ -2023,7 +2005,6 @@ userConfig:
 			})
 
 			It("exports the details of an app", func() {
-				var infraExportErr bool
 				Eventually(func() string {
 					out, err := env.Epinio("", "app", "show", app)
 					if err != nil {
@@ -2041,17 +2022,9 @@ userConfig:
 					out, err := env.Epinio("", "app", "export", app, exportPath)
 					if err != nil {
 						fmt.Fprintf(GinkgoWriter, "[DEBUG export] epinio app export failed: err=%v (exit code may be 255); combined stdout/stderr:\n---\n%s\n---\n", err, out)
-						if strings.Contains(out, "skopeo copy did not produce the tar file") || strings.Contains(out, "failed waiting for job completion: image export job failed") {
-							infraExportErr = true
-							return nil
-						}
-						return err
+						return fmt.Errorf("export command failed: %w; output: %s", err, out)
 					}
 					if strings.Contains(out, "failed to retrieve image") || strings.Contains(out, "failed to open tar file") {
-						if strings.Contains(out, "skopeo copy did not produce the tar file") || strings.Contains(out, "failed waiting for job completion: image export job failed") {
-							infraExportErr = true
-							return nil
-						}
 						return fmt.Errorf("export failed: %s", out)
 					}
 					for _, f := range []string{exportValues, exportChart, exportImage} {
@@ -2066,10 +2039,7 @@ userConfig:
 						}
 					}
 					return nil
-				}, "24m", "45s").ShouldNot(HaveOccurred(), "export may be flaky when image-export job is slow or fails")
-				if infraExportErr {
-					Skip("Skipping due to known infra image-export instability (skopeo tarball generation)")
-				}
+				}, "24m", "45s").ShouldNot(HaveOccurred(), "export failed")
 
 				exported, err := filepath.Glob(exportPath + "/*")
 				Expect(err).ToNot(HaveOccurred(), exported)
@@ -2103,7 +2073,6 @@ userConfig:
 			})
 
 			It("correctly handles complex quoting when deploying and exporting an app", func() {
-				var infraExportErr bool
 				out, err := env.Epinio("", "apps", "env", "set", app,
 					"complex", `{
    "usernameOrOrg": "scures",
@@ -2129,17 +2098,9 @@ userConfig:
 					out, err := env.Epinio("", "app", "export", app, exportPath)
 					if err != nil {
 						fmt.Fprintf(GinkgoWriter, "[DEBUG export complex quoting] epinio app export failed: err=%v; combined stdout/stderr:\n---\n%s\n---\n", err, out)
-						if strings.Contains(out, "skopeo copy did not produce the tar file") || strings.Contains(out, "failed waiting for job completion: image export job failed") {
-							infraExportErr = true
-							return nil
-						}
-						return err
+						return fmt.Errorf("export command failed: %w; output: %s", err, out)
 					}
 					if strings.Contains(out, "failed to retrieve image") || strings.Contains(out, "failed to open tar file") {
-						if strings.Contains(out, "skopeo copy did not produce the tar file") || strings.Contains(out, "failed waiting for job completion: image export job failed") {
-							infraExportErr = true
-							return nil
-						}
 						return fmt.Errorf("export failed: %s", out)
 					}
 					for _, f := range []string{exportValues, exportChart, exportImage} {
@@ -2154,10 +2115,7 @@ userConfig:
 						}
 					}
 					return nil
-				}, "24m", "45s").ShouldNot(HaveOccurred(), "export may be flaky when image-export job is slow or fails")
-				if infraExportErr {
-					Skip("Skipping due to known infra image-export instability (skopeo tarball generation)")
-				}
+				}, "24m", "45s").ShouldNot(HaveOccurred(), "export failed")
 
 				exported, err := filepath.Glob(exportPath + "/*")
 				Expect(err).ToNot(HaveOccurred(), exported)

@@ -132,13 +132,6 @@ func runPortForwardGet(namespace, appName, instance string) error {
 		}
 		time.Sleep(time.Duration(attempt) * time.Second)
 	}
-	// In overloaded CI the server side can repeatedly close the stream before
-	// any response bytes are sent; this is infra noise, not deterministic app
-	// behavior. Treat that specific condition as non-fatal.
-	if strings.Contains(lastErr.Error(), "unexpected EOF") {
-		fmt.Fprintf(GinkgoWriter, "[AppPortForward] treating persistent unexpected EOF as flaky infra and continuing\n")
-		return nil
-	}
 	return fmt.Errorf("port-forward GET failed after retries: %w", lastErr)
 }
 
