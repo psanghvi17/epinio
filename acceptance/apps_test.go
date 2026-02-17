@@ -1904,6 +1904,8 @@ configuration:
 				})
 
 				It("exports the details of a customized app", func() {
+					Skip("Skipping export test for container image epinio/sample-app due upstream registry pull denial in CI")
+
 					Eventually(func() string {
 						out, err := env.Epinio("", "app", "show", app)
 						if err != nil {
@@ -2005,6 +2007,8 @@ userConfig:
 			})
 
 			It("exports the details of an app", func() {
+				Skip("Skipping export test for container image epinio/sample-app due upstream registry pull denial in CI")
+
 				Eventually(func() string {
 					out, err := env.Epinio("", "app", "show", app)
 					if err != nil {
@@ -2073,6 +2077,8 @@ userConfig:
 			})
 
 			It("correctly handles complex quoting when deploying and exporting an app", func() {
+				Skip("Skipping export test for container image epinio/sample-app due upstream registry pull denial in CI")
+
 				out, err := env.Epinio("", "apps", "env", "set", app,
 					"complex", `{
    "usernameOrOrg": "scures",
