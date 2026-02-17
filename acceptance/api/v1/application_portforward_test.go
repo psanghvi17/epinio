@@ -153,8 +153,8 @@ func runPortForwardGetOnce(namespace, appName, instance string, attempt int) err
 	// Let the port-forward stream stabilize before sending (reduces EOF under load).
 	time.Sleep(3 * time.Second)
 
-	// Send a GET request through the stream (apache inside sample-app listens on port 80).
-	req, _ := http.NewRequest(http.MethodGet, "http://localhost/", nil)
+	// Send a GET request through the stream.
+	req, _ := http.NewRequest(http.MethodGet, "http://localhost:8080/", nil)
 	if err = req.Write(streamData); err != nil {
 		fmt.Fprintf(GinkgoWriter, "[AppPortForward] req.Write failed after %v: %v\n", time.Since(start), err)
 		return fmt.Errorf("req.Write: %w", err)
@@ -215,8 +215,8 @@ func setupConnection(namespace, appName, instance string) (httpstream.Connection
 func createStreams(conn httpstream.Connection) (httpstream.Stream, httpstream.Stream) {
 	buildHeaders := func(streamType string) http.Header {
 		headers := http.Header{}
-		// sample-app image (php:8.2-apache) listens on container port 80
-		headers.Set(v1.PortHeader, "80")
+		// Epinio app chart defaults to appListeningPort=8080.
+		headers.Set(v1.PortHeader, "8080")
 		headers.Set(v1.PortForwardRequestIDHeader, "0")
 		headers.Set(v1.StreamType, streamType)
 		return headers

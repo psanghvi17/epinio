@@ -1034,7 +1034,7 @@ var _ = Describe("Apps", LApplication, func() {
 			})
 
 			It("is using the cache PVC", func() {
-				pvcName := names.GenerateResourceName(namespace, appName)
+				pvcName := names.GenerateResourceName(namespace, "cache", appName)
 				// Wait for build cache PVC to appear (staging may create it asynchronously).
 				var found bool
 				for deadline := time.Now().Add(2 * time.Minute); time.Now().Before(deadline); time.Sleep(5 * time.Second) {
@@ -1054,7 +1054,7 @@ var _ = Describe("Apps", LApplication, func() {
 		})
 		When("deleting the app", func() {
 			It("deletes the cache PVC too", func() {
-				pvcName := names.GenerateResourceName(namespace, appName)
+				pvcName := names.GenerateResourceName(namespace, "cache", appName)
 				// Wait for build cache PVC to appear.
 				var found bool
 				for deadline := time.Now().Add(2 * time.Minute); time.Now().Before(deadline); time.Sleep(5 * time.Second) {

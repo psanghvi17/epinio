@@ -220,40 +220,64 @@ func fetchAppImageFile(
 	theApp *models.App,
 	imageOutputFilename string,
 ) (*os.File, error) {
-	// Mixing in nanoseconds to prevent multiple requests for the same app to clash over the job name
+	// Try with source auth first, then retry without source auth in case the auth file
+	// does not contain credentials for external registries.
+	var lastErr error
+	for _, useSourceAuth := range []bool{true, false} {
+		if removeErr := os.Remove(imageExportVolume + imageOutputFilename); removeErr != nil && !os.IsNotExist(removeErr) {
+			helpers.Logger.Infow("unable to remove stale image export tar before retry", "error", removeErr, "file", imageOutputFilename)
+		}
 
-	nano := strconv.Itoa(time.Now().Nanosecond())
-	jobName := names.GenerateResourceName(
-		"image-export-job",
-		theApp.Meta.Namespace,
-		theApp.Meta.Name,
-		theApp.StageID,
-		nano,
-	)
+		nano := strconv.Itoa(time.Now().Nanosecond())
+		jobName := names.GenerateResourceName(
+			"image-export-job",
+			theApp.Meta.Namespace,
+			theApp.Meta.Name,
+			theApp.StageID,
+			nano,
+		)
 
-	err := runDownloadImageJob(
-		ctx,
-		cluster,
-		jobName,
-		theApp.ImageURL,
-		imageOutputFilename,
-	)
-	if err != nil {
-		return nil, errors.Wrap(err, "unable to create job")
+		err := runDownloadImageJob(
+			ctx,
+			cluster,
+			jobName,
+			theApp.ImageURL,
+			imageOutputFilename,
+			useSourceAuth,
+		)
+		if err != nil {
+			lastErr = errors.Wrap(err, "unable to create job")
+			continue
+		}
+
+		file, err := getFileImageAndJobCleanup(
+			ctx,
+			cluster,
+			jobName,
+			imageOutputFilename,
+		)
+		if err == nil {
+			return file, nil
+		}
+
+		helpers.Logger.Infow(
+			"image export attempt failed",
+			"job",
+			jobName,
+			"image",
+			theApp.ImageURL,
+			"useSourceAuth",
+			useSourceAuth,
+			"error",
+			err,
+		)
+		lastErr = errors.Wrap(err, "failed waiting for job completion")
 	}
 
-	file, err := getFileImageAndJobCleanup(
-		ctx,
-		cluster,
-		jobName,
-		imageOutputFilename,
-	)
-
-	if err != nil {
-		return nil, errors.Wrap(err, "failed waiting for job completion")
+	if lastErr == nil {
+		lastErr = errors.New("no image export attempts were executed")
 	}
-
-	return file, nil
+	return nil, lastErr
 }
 
 func runDownloadImageJob(
@@ -262,6 +286,7 @@ func runDownloadImageJob(
 	jobName,
 	imageURL,
 	imageOutputFilename string,
+	useSourceAuth bool,
 ) error {
 	appImageExporter := viper.GetString("app-image-exporter")
 
@@ -318,6 +343,12 @@ func runDownloadImageJob(
 		})
 	}
 
+	args := []string{"copy", "--retry-times=5"}
+	if useSourceAuth {
+		args = append(args, "--src-authfile=/root/containers/auth.json")
+	}
+	args = append(args, "docker://"+imageURL, "docker-archive:/tmp/"+imageOutputFilename)
+
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        jobName,
@@ -352,15 +383,10 @@ func runDownloadImageJob(
 					},
 					Containers: []corev1.Container{
 						{
-							Name:    "skopeo",
-							Image:   appImageExporter,
-							Command: []string{"skopeo"},
-							Args: []string{
-								"copy",
-								"--src-authfile=/root/containers/auth.json",
-								"docker://" + imageURL,
-								"docker-archive:/tmp/" + imageOutputFilename,
-							},
+							Name:         "skopeo",
+							Image:        appImageExporter,
+							Command:      []string{"skopeo"},
+							Args:         args,
 							VolumeMounts: mounts,
 						},
 					},
@@ -370,6 +396,8 @@ func runDownloadImageJob(
 			},
 		},
 	}
+
+	helpers.Logger.Infow("image export job command", "job", jobName, "args", args)
 
 	return cluster.CreateJob(ctx, helmchart.Namespace(), job)
 }
@@ -403,38 +431,44 @@ func getFileImageAndJobCleanup(
 		return nil, errors.Wrapf(err, "error waiting for job done %s", jobName)
 	}
 
-	// If the job failed, the tar file was never created. Return a clear error and clean up the job.
-	failed, err := cluster.IsJobFailed(ctx, jobName, helmchart.Namespace())
-	if err != nil {
-		return nil, errors.Wrapf(err, "error checking job status %s", jobName)
-	}
-	if failed {
-		_ = cluster.DeleteJob(ctx, helmchart.Namespace(), jobName)
-		return nil, errors.New("image export job failed (skopeo copy did not produce the tar file)")
+	// Check for file existence (retry because PVC visibility may lag the job completion signal).
+	filePath := imageExportVolume + imageOutputFilename
+	file, fileErr := openExportImageFileWithRetries(filePath, 10, 2*time.Second)
+	if fileErr == nil {
+		fileInfo, statErr := file.Stat()
+		if statErr != nil {
+			_ = file.Close()
+			file = nil
+			fileErr = errors.Wrap(statErr, "failed to stat image tar file")
+		} else if fileInfo.Size() <= 0 {
+			_ = file.Close()
+			file = nil
+			fileErr = errors.New("image export tar file exists but is empty")
+		}
 	}
 
-	// check for file existence (retry briefly in case of volume sync delay)
-	filePath := imageExportVolume + imageOutputFilename
-	var file *os.File
-	for attempt := 0; attempt < 3; attempt++ {
-		file, err = os.Open(filePath)
-		if err == nil {
-			break
-		}
-		if attempt < 2 {
-			time.Sleep(2 * time.Second)
+	failed, err := cluster.IsJobFailed(ctx, jobName, helmchart.Namespace())
+	if err != nil {
+		if file != nil {
+			helpers.Logger.Infow("unable to check image export job status, but tar file was created", "job", jobName, "error", err)
+		} else {
+			return nil, errors.Wrapf(err, "error checking job status %s", jobName)
 		}
 	}
-	if err != nil {
-		helpers.Logger.Infow(
-			"export job result error",
-			"error",
-			err,
-			"job",
-			jobName,
-		)
+	if failed && file == nil {
+		diag := imageExportJobDiagnostics(ctx, cluster, jobName)
+		helpers.Logger.Infow("image export job failed", "job", jobName, "diagnostics", diag)
 		_ = cluster.DeleteJob(ctx, helmchart.Namespace(), jobName)
-		return nil, errors.Wrap(err, "failed to open tar file")
+		return nil, errors.Errorf("image export job failed (skopeo copy did not produce the tar file): %s", diag)
+	}
+	if file == nil {
+		diag := imageExportJobDiagnostics(ctx, cluster, jobName)
+		helpers.Logger.Infow("image export tar missing after completed job", "job", jobName, "diagnostics", diag)
+		_ = cluster.DeleteJob(ctx, helmchart.Namespace(), jobName)
+		return nil, errors.Wrapf(fileErr, "failed to open tar file (%s)", diag)
+	}
+	if failed {
+		helpers.Logger.Infow("image export job reported failure but tar file exists; continuing with tar artifact", "job", jobName)
 	}
 
 	helpers.Logger.Infow("delete job, done", "job", jobName)
@@ -444,6 +478,87 @@ func getFileImageAndJobCleanup(
 		helpers.Logger.Infow("export job delete error", "error", err, "job", jobName)
 	}
 	return file, errors.Wrapf(err, "error deleting job %s", jobName)
+}
+
+func openExportImageFileWithRetries(path string, attempts int, delay time.Duration) (*os.File, error) {
+	if attempts < 1 {
+		attempts = 1
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		file, err := os.Open(path)
+		if err == nil {
+			return file, nil
+		}
+		lastErr = err
+		if attempt < attempts {
+			time.Sleep(delay)
+		}
+	}
+
+	return nil, lastErr
+}
+
+func imageExportJobDiagnostics(ctx context.Context, cluster *kubernetes.Cluster, jobName string) string {
+	namespace := helmchart.Namespace()
+	diagnostics := []string{}
+
+	job, err := cluster.Kubectl.BatchV1().Jobs(namespace).Get(ctx, jobName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Sprintf("failed to get job %q: %v", jobName, err)
+	}
+
+	diagnostics = append(diagnostics, fmt.Sprintf("job counters: active=%d succeeded=%d failed=%d", job.Status.Active, job.Status.Succeeded, job.Status.Failed))
+	for _, cond := range job.Status.Conditions {
+		diagnostics = append(diagnostics,
+			fmt.Sprintf("job condition: type=%s status=%s reason=%s message=%q", cond.Type, cond.Status, cond.Reason, cond.Message))
+	}
+
+	pods, err := cluster.ListPods(ctx, namespace, fmt.Sprintf("job-name=%s", jobName))
+	if err != nil {
+		diagnostics = append(diagnostics, fmt.Sprintf("failed to list job pods: %v", err))
+		return strings.Join(diagnostics, " | ")
+	}
+	if len(pods.Items) == 0 {
+		diagnostics = append(diagnostics, "no pods found for job")
+		return strings.Join(diagnostics, " | ")
+	}
+
+	for _, pod := range pods.Items {
+		diagnostics = append(diagnostics,
+			fmt.Sprintf("pod %s phase=%s reason=%s message=%q", pod.Name, pod.Status.Phase, pod.Status.Reason, pod.Status.Message))
+		for _, st := range pod.Status.ContainerStatuses {
+			if st.State.Terminated != nil {
+				t := st.State.Terminated
+				diagnostics = append(diagnostics,
+					fmt.Sprintf("container %s terminated: exitCode=%d reason=%s message=%q", st.Name, t.ExitCode, t.Reason, t.Message))
+			} else if st.State.Waiting != nil {
+				w := st.State.Waiting
+				diagnostics = append(diagnostics,
+					fmt.Sprintf("container %s waiting: reason=%s message=%q", st.Name, w.Reason, w.Message))
+			}
+		}
+
+		logTail, logErr := cluster.Kubectl.CoreV1().Pods(namespace).GetLogs(
+			pod.Name,
+			&corev1.PodLogOptions{
+				Container: "skopeo",
+				TailLines: ptr.To[int64](40),
+			},
+		).DoRaw(ctx)
+		if logErr != nil {
+			diagnostics = append(diagnostics, fmt.Sprintf("failed to read skopeo logs from pod %s: %v", pod.Name, logErr))
+			continue
+		}
+
+		cleanLog := strings.ReplaceAll(strings.TrimSpace(string(logTail)), "\n", " || ")
+		if cleanLog != "" {
+			diagnostics = append(diagnostics, fmt.Sprintf("skopeo log tail from pod %s: %s", pod.Name, cleanLog))
+		}
+	}
+
+	return strings.Join(diagnostics, " | ")
 }
 
 func fetchAppValues(
