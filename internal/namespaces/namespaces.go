@@ -17,7 +17,9 @@ package namespaces
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/epinio/epinio/helpers"
 	"github.com/epinio/epinio/helpers/kubernetes"
 	"github.com/epinio/epinio/internal/duration"
 	"github.com/epinio/epinio/internal/registry"
@@ -123,12 +125,18 @@ func Create(ctx context.Context, kubeClient *kubernetes.Cluster, namespace strin
 	waitCtx, cancel := context.WithTimeout(context.Background(), duration.ToSecretCopied())
 	defer cancel()
 	if _, err := kubeClient.WaitForSecret(waitCtx, namespace, "registry-creds", duration.ToSecretCopied()); err != nil {
+		// Namespace creation should not block for minutes under API rate limiting.
+		// Treat delayed secret propagation as eventually-consistent and let follow-up
+		// operations retry while surfacing diagnostics for debugging.
+		diagCtx, diagCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer diagCancel()
+
 		var sourceSecretState string
 		var targetSecretState string
 		var serviceAccountPullSecrets string
 		var getErr error
 
-		_, getErr = kubeClient.Kubectl.CoreV1().Secrets("epinio").Get(ctx, registry.CredentialsSecretName, metav1.GetOptions{})
+		_, getErr = kubeClient.Kubectl.CoreV1().Secrets("epinio").Get(diagCtx, registry.CredentialsSecretName, metav1.GetOptions{})
 		if getErr == nil {
 			sourceSecretState = "present"
 		} else if apierrors.IsNotFound(getErr) {
@@ -137,7 +145,7 @@ func Create(ctx context.Context, kubeClient *kubernetes.Cluster, namespace strin
 			sourceSecretState = fmt.Sprintf("error: %v", getErr)
 		}
 
-		_, getErr = kubeClient.Kubectl.CoreV1().Secrets(namespace).Get(ctx, registry.CredentialsSecretName, metav1.GetOptions{})
+		_, getErr = kubeClient.Kubectl.CoreV1().Secrets(namespace).Get(diagCtx, registry.CredentialsSecretName, metav1.GetOptions{})
 		if getErr == nil {
 			targetSecretState = "present"
 		} else if apierrors.IsNotFound(getErr) {
@@ -146,16 +154,21 @@ func Create(ctx context.Context, kubeClient *kubernetes.Cluster, namespace strin
 			targetSecretState = fmt.Sprintf("error: %v", getErr)
 		}
 
-		sa, saErr := kubeClient.Kubectl.CoreV1().ServiceAccounts(namespace).Get(ctx, namespace, metav1.GetOptions{})
+		sa, saErr := kubeClient.Kubectl.CoreV1().ServiceAccounts(namespace).Get(diagCtx, namespace, metav1.GetOptions{})
 		if saErr == nil {
 			serviceAccountPullSecrets = fmt.Sprintf("%v", sa.ImagePullSecrets)
 		} else {
 			serviceAccountPullSecrets = fmt.Sprintf("error: %v", saErr)
 		}
 
-		return errors.Wrapf(err,
-			"timed out while waiting for registry-creds secret to be copied to the new namespace (diag: sourceSecret=%s targetSecret=%s serviceAccountImagePullSecrets=%s)",
-			sourceSecretState, targetSecretState, serviceAccountPullSecrets)
+		helpers.Logger.Warnw(
+			"registry-creds secret not ready after namespace creation; continuing and relying on eventual consistency",
+			"namespace", namespace,
+			"error", err,
+			"sourceSecret", sourceSecretState,
+			"targetSecret", targetSecretState,
+			"serviceAccountImagePullSecrets", serviceAccountPullSecrets,
+		)
 	}
 
 	return nil
