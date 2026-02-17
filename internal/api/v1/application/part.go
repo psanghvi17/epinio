@@ -39,7 +39,6 @@ import (
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v2"
 	"helm.sh/helm/v3/pkg/repo"
-	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	restclient "k8s.io/client-go/rest"
@@ -349,53 +348,7 @@ func runDownloadImageJob(
 	}
 	args = append(args, "docker://"+imageURL, "docker-archive:/tmp/"+imageOutputFilename)
 
-	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        jobName,
-			Labels:      labels,
-			Annotations: map[string]string{},
-		},
-		Spec: batchv1.JobSpec{
-			BackoffLimit: ptr.To[int32](0),
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels:      labels,
-					Annotations: map[string]string{},
-				},
-				Spec: corev1.PodSpec{
-					Affinity: &corev1.Affinity{
-						PodAffinity: &corev1.PodAffinity{
-							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
-								{
-									LabelSelector: &metav1.LabelSelector{
-										MatchExpressions: []metav1.LabelSelectorRequirement{
-											{
-												Key:      "app.kubernetes.io/name",
-												Operator: "In",
-												Values:   []string{"epinio-server"},
-											},
-										},
-									},
-									TopologyKey: "kubernetes.io/hostname",
-								},
-							},
-						},
-					},
-					Containers: []corev1.Container{
-						{
-							Name:         "skopeo",
-							Image:        appImageExporter,
-							Command:      []string{"skopeo"},
-							Args:         args,
-							VolumeMounts: mounts,
-						},
-					},
-					RestartPolicy: corev1.RestartPolicyNever,
-					Volumes:       volumes,
-				},
-			},
-		},
-	}
+	job := newSkopeoJob(jobName, labels, appImageExporter, "skopeo", args, mounts, volumes)
 
 	helpers.Logger.Infow("image export job command", "job", jobName, "args", args)
 

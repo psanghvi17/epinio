@@ -42,8 +42,6 @@ import (
 	"helm.sh/helm/v3/pkg/chartutil"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 )
 
 // ExportToRegistry handles the API endpoint GET /namespaces/:namespace/applications/:app/export
@@ -588,55 +586,7 @@ func createCopyJob(
 
 	helpers.Logger.Infow("OCI export image copy command", "skopeo", args)
 
-	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        jobName,
-			Labels:      labels,
-			Annotations: map[string]string{},
-		},
-		Spec: batchv1.JobSpec{
-			BackoffLimit: ptr.To[int32](0),
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels:      labels,
-					Annotations: map[string]string{},
-				},
-				Spec: corev1.PodSpec{
-					Affinity: &corev1.Affinity{
-						PodAffinity: &corev1.PodAffinity{
-							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
-								{
-									LabelSelector: &metav1.LabelSelector{
-										MatchExpressions: []metav1.LabelSelectorRequirement{
-											{
-												Key:      "app.kubernetes.io/name",
-												Operator: "In",
-												Values:   []string{"epinio-server"},
-											},
-										},
-									},
-									TopologyKey: "kubernetes.io/hostname",
-								},
-							},
-						},
-					},
-					Containers: []corev1.Container{
-						{
-							Name:         "oci-push",
-							Image:        appImageExporter,
-							Command:      []string{"skopeo"},
-							Args:         args,
-							VolumeMounts: mounts,
-						},
-					},
-					RestartPolicy: corev1.RestartPolicyNever,
-					Volumes:       volumes,
-				},
-			},
-		},
-	}
-
-	return job
+	return newSkopeoJob(jobName, labels, appImageExporter, "oci-push", args, mounts, volumes)
 }
 
 // runJob executes the given kube job and waits for its completion (or timeout (12 minutes (**))).
