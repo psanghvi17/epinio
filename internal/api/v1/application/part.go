@@ -24,8 +24,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/epinio/epinio/helpers"
 	"github.com/epinio/epinio/helpers/kubernetes"
+	"github.com/epinio/epinio/internal/cli/server/requestctx"
 	"github.com/epinio/epinio/internal/api/v1/response"
 	"github.com/epinio/epinio/internal/appchart"
 	"github.com/epinio/epinio/internal/application"
@@ -125,6 +125,7 @@ func fetchAppChart(
 	cluster *kubernetes.Cluster,
 	theApp *models.App,
 ) apierror.APIErrors {
+	log := requestctx.Logger(ctx)
 	// Get the application's app chart
 	appChart, err := appchart.Lookup(ctx, cluster, theApp.Configuration.AppChart)
 	if err != nil {
@@ -139,7 +140,7 @@ func fetchAppChart(
 		return apierror.InternalError(err)
 	}
 
-	helpers.Logger.Infow("input", "chart archive", chartArchive)
+	log.Infow("input", "chart archive", chartArchive)
 
 	// Ensure presence of the chart archive as a local file.
 
@@ -148,30 +149,30 @@ func fetchAppChart(
 		return apierror.InternalError(err)
 	}
 
-	helpers.Logger.Infow("input", "local chart archive", chartArchive)
+	log.Infow("input", "local chart archive", chartArchive)
 
 	// Here the archive is surely a local file
 
-	file, err := os.Open(chartArchive)
+	file, err := os.Open(chartArchive) // nolint:gosec // path from urlcache under controlled export volume
 	if err != nil {
 		return apierror.InternalError(err)
 	}
 
-	helpers.Logger.Infow("input is file")
+	log.Infow("input is file")
 
 	fileInfo, err := file.Stat()
 	if err != nil {
 		return apierror.InternalError(err)
 	}
 
-	helpers.Logger.Infow("input has stat")
+	log.Infow("input has stat")
 
 	contentLength := fileInfo.Size()
 	contentType := "application/x-gzip"
 
-	helpers.Logger.Infow("input, returning file")
+	log.Infow("input, returning file")
 
-	helpers.Logger.Infow("OK",
+	log.Infow("OK",
 		"origin", c.Request.URL.String(),
 		"returning", fmt.Sprintf("%d bytes %s as is", contentLength, contentType),
 	)
@@ -186,7 +187,8 @@ func fetchAppImage(
 	cluster *kubernetes.Cluster,
 	theApp *models.App,
 ) apierror.APIErrors {
-	helpers.Logger.Infow("fetching app image")
+	log := requestctx.Logger(ctx)
+	log.Infow("fetching app image")
 
 	// Mixing in nanoseconds to prevent multiple requests for the same app to clash over the file name
 	now := strconv.Itoa(time.Now().Nanosecond())
@@ -198,7 +200,7 @@ func fetchAppImage(
 		now,
 	)
 
-	helpers.Logger.Infow("got app chart", "chart image", theApp.ImageURL)
+	log.Infow("got app chart", "chart image", theApp.ImageURL)
 
 	file, err := fetchAppImageFile(ctx, cluster, theApp, imageOutputFilename)
 	if err != nil {
@@ -208,7 +210,7 @@ func fetchAppImage(
 	defer func() {
 		err := os.Remove(imageExportVolume + imageOutputFilename)
 		if err != nil {
-			helpers.Logger.Infow(
+			log.Infow(
 				"error cleaning up image file",
 				"filename",
 				imageOutputFilename,
@@ -235,7 +237,8 @@ func fetchAppArchive(
 	cluster *kubernetes.Cluster,
 	theApp *models.App,
 ) apierror.APIErrors {
-	helpers.Logger.Infow("fetching app archive (chart and images)")
+	log := requestctx.Logger(ctx)
+	log.Infow("fetching app archive (chart and images)")
 
 	// 1. Values
 	valuesYAML, err := helm.Values(cluster, theApp.Meta)
@@ -259,7 +262,7 @@ func fetchAppArchive(
 	if err != nil {
 		return apierror.InternalError(err)
 	}
-	chartFile, err := os.Open(chartArchive)
+	chartFile, err := os.Open(chartArchive) // nolint:gosec // path from urlcache under controlled export volume
 	if err != nil {
 		return apierror.InternalError(err)
 	}
@@ -512,16 +515,17 @@ func getFileImageAndJobCleanup(
 	jobName,
 	imageOutputFilename string,
 ) (*os.File, error) {
+	log := requestctx.Logger(ctx)
 	err := cluster.WaitForJobDone(ctx, helmchart.Namespace(), jobName, time.Minute*2)
 	if err != nil {
-		helpers.Logger.Infow("export job wait error", "error", err, "job", jobName)
+		log.Infow("export job wait error", "error", err, "job", jobName)
 
 		if errors.Is(err, context.Canceled) {
-			helpers.Logger.Infow("delete job, canceled", "job", jobName)
+			log.Infow("delete job, canceled", "job", jobName)
 			// NOTE: Use bg context here, the regular once is canceled.
 			err := cluster.DeleteJob(context.Background(), helmchart.Namespace(), jobName)
 			if err != nil {
-				helpers.Logger.Infow(
+				log.Infow(
 					"export job delete error, in cancellation",
 					"error",
 					err,
@@ -535,11 +539,11 @@ func getFileImageAndJobCleanup(
 	}
 
 	// check for file existence
-	file, err := os.Open(imageExportVolume + imageOutputFilename)
+	file, err := os.Open(imageExportVolume + imageOutputFilename) // nolint:gosec // path under imageExportVolume, filename from job
 	if err != nil {
 		// NOTE: job is kept, allows for debugging.
 
-		helpers.Logger.Infow(
+		log.Infow(
 			"export job result error",
 			"error",
 			err,
@@ -549,11 +553,11 @@ func getFileImageAndJobCleanup(
 		return nil, errors.Wrap(err, "failed to open tar file")
 	}
 
-	helpers.Logger.Infow("delete job, done", "job", jobName)
+	log.Infow("delete job, done", "job", jobName)
 
 	err = cluster.DeleteJob(ctx, helmchart.Namespace(), jobName)
 	if err != nil {
-		helpers.Logger.Infow("export job delete error", "error", err, "job", jobName)
+		log.Infow("export job delete error", "error", err, "job", jobName)
 	}
 	return file, errors.Wrapf(err, "error deleting job %s", jobName)
 }
@@ -638,7 +642,7 @@ func chartArchiveURL(
 	}
 
 	// Read index into memory
-	content, err := os.ReadFile("/tmp/.helmcache/" + name + "-index.yaml")
+	content, err := os.ReadFile("/tmp/.helmcache/" + name + "-index.yaml") // nolint:gosec // fixed prefix, name from app chart lookup
 	if err != nil {
 		return "", err
 	}
