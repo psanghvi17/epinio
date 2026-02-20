@@ -386,6 +386,12 @@ func streamPodLogs(
 	var wg sync.WaitGroup
 	var logWg sync.WaitGroup
 
+	// Non-follow sessions are expected to stream a finite set of logs and then
+	// close the websocket. We use a special marker line emitted by the backend
+	// ("___FILTER_COMPLETE___") to detect completion and proactively tear down
+	// the websocket, instead of waiting indefinitely.
+	singleRun := logParams != nil && !logParams.Follow
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -494,7 +500,14 @@ func streamPodLogs(
 	log.Debugw("stream copying begin")
 
 	for logLine := range logChan {
-		log.Debugw("streaming", "log line", logLine)
+		// For non-follow sessions, stop streaming once the backend signals
+		// completion. This ensures websocket clients (like the acceptance tests)
+		// see a clean CloseNormalClosure instead of timing out.
+		if singleRun && logLine.Message == "___FILTER_COMPLETE___" {
+			break
+		}
+
+		helpers.Logger.Debugw("streaming", "log line", logLine)
 
 		msg, err := json.Marshal(logLine)
 		if err != nil {

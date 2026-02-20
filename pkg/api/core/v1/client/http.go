@@ -270,13 +270,17 @@ func NewJSONResponseHandler[T any](logger logr.Logger, response T) ResponseHandl
 
 		respLog.V(1).Info("response received", "status", httpResponse.StatusCode)
 
-		// Print the full response body for debugging
 		bodyStr := string(bodyBytes)
-		/*fmt.Fprintf(os.Stderr, "\n=== RAW RESPONSE (Status: %d) ===\n", httpResponse.StatusCode)
-		fmt.Fprintf(os.Stderr, "%s\n", bodyStr)
-		fmt.Fprintf(os.Stderr, "=== END RAW RESPONSE ===\n\n")
-		_ = os.Stderr.Sync() // Force flush to ensure output appears
-		*/
+
+		// Optionally print the full response body for debugging when explicitly enabled.
+		// This is controlled via the EPINIO_DEBUG_HTTP environment variable to avoid
+		// polluting normal CLI output (which breaks JSON-parsing callers and tests).
+		if debugEnv := strings.ToLower(strings.TrimSpace(os.Getenv("EPINIO_DEBUG_HTTP"))); debugEnv == "1" || debugEnv == "true" || debugEnv == "yes" {
+			fmt.Fprintf(os.Stderr, "\n=== RAW RESPONSE (Status: %d) ===\n", httpResponse.StatusCode)
+			fmt.Fprintf(os.Stderr, "%s\n", bodyStr)
+			fmt.Fprintf(os.Stderr, "=== END RAW RESPONSE ===\n\n")
+			_ = os.Stderr.Sync() // Force flush to ensure output appears
+		}
 
 		// Check if the response looks like HTML/XML (starts with '<')
 		if strings.HasPrefix(strings.TrimSpace(bodyStr), "<") {
