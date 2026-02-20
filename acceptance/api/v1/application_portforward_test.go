@@ -18,7 +18,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/epinio/epinio/acceptance/helpers/catalog"
 	"github.com/epinio/epinio/acceptance/helpers/proc"
@@ -26,9 +25,8 @@ import (
 	"github.com/epinio/epinio/pkg/api/core/v1/client"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/httpstream"
-	"k8s.io/apimachinery/pkg/util/httpstream/spdy"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/portforward"
-	gospdy "k8s.io/client-go/transport/spdy"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -198,11 +196,8 @@ func setupConnection(namespace, appName, instance string) (httpstream.Connection
 	values.Add("authtoken", token)
 	portForwardURL.RawQuery = values.Encode()
 
-	// we need to use the spdy client to handle this connection
-	upgradeRoundTripper, err := client.NewUpgrader(spdy.RoundTripperConfig{
-		TLS:        http.DefaultTransport.(*http.Transport).TLSClientConfig, // See `ExtendLocalTrust`
-		PingPeriod: time.Second * 5,
-	})
+	// Create rest.Config for WebSocket connection
+	baseURL, err := url.Parse(serverURL)
 	Expect(err).ToNot(HaveOccurred())
 
 	httpClient := &http.Client{Transport: upgradeRoundTripper, Timeout: 180 * time.Second}
