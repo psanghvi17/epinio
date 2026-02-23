@@ -19,8 +19,8 @@ import (
 	"net/http"
 	"runtime"
 
+	"github.com/epinio/epinio/helpers"
 	"github.com/epinio/epinio/helpers/kubernetes/tailer"
-	"github.com/epinio/epinio/helpers/tracelog"
 	"github.com/epinio/epinio/internal/cli/settings"
 	"github.com/epinio/epinio/internal/cli/termui"
 	"github.com/epinio/epinio/internal/selfupdater"
@@ -53,13 +53,14 @@ type APIClient interface {
 	AllApps() (models.AppList, error)
 	AppShow(namespace string, appName string) (models.App, error)
 	AppUpdate(req models.ApplicationUpdateRequest, namespace string, appName string) (models.Response, error)
-	AppDelete(namespace string, names []string) (models.ApplicationDeleteResponse, error)
+	AppDelete(namespace string, names []string, deleteImage bool) (models.ApplicationDeleteResponse, error)
 	AppUpload(namespace string, name string, file client.FormFile) (models.UploadResponse, error)
 	AppImportGit(namespace string, name string, gitRef models.GitRef) (models.ImportGitResponse, error)
 	AppStage(req models.StageRequest) (*models.StageResponse, error)
 	AppDeploy(req models.DeployRequest) (*models.DeployResponse, error)
 	AppLogs(namespace, appName, stageID string, follow bool, options *client.LogOptions, callback func(tailer.ContainerLogLine)) error
 	StagingComplete(namespace string, id string) (models.Response, error)
+	StagingCompleteStream(ctx context.Context, namespace, id string, callback func(models.StageCompleteEvent) error) error
 	AppRunning(app models.AppRef) (models.Response, error)
 	AppExec(ctx context.Context, namespace string, appName, instance string, tty kubectlterm.TTY) error
 	AppPortForward(namespace string, appName, instance string, opts *client.PortForwardOpts) error
@@ -142,8 +143,6 @@ type APIClient interface {
 }
 
 func New() (*EpinioClient, error) {
-	logger := tracelog.NewLogger().WithName("EpinioClient").V(3)
-
 	updater, err := getUpdater(runtime.GOOS)
 	if err != nil {
 		return nil, errors.Wrap(err, "getting updater")
@@ -151,12 +150,16 @@ func New() (*EpinioClient, error) {
 
 	return &EpinioClient{
 		ui:      termui.NewUI(),
-		Log:     logger,
+		Log:     logr.Discard(),
 		Updater: updater,
 	}, nil
 }
 
 func (c *EpinioClient) Init(ctx context.Context) error {
+	// Logger is initialized in the CLI root persistent pre-run (after flags/env are loaded).
+	// Re-bind here so we don't capture a discarded logger during early CLI construction.
+	c.Log = helpers.LoggerToLogr().WithName("EpinioClient").V(3)
+
 	cfg, err := settings.Load()
 	if err != nil {
 		return errors.Wrap(err, "error loading settings")

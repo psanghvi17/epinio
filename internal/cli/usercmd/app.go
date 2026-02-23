@@ -33,6 +33,7 @@ import (
 	"github.com/epinio/epinio/internal/duration"
 	"github.com/epinio/epinio/pkg/api/core/v1/client"
 	"github.com/epinio/epinio/pkg/api/core/v1/models"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 	kubectlterm "k8s.io/kubectl/pkg/util/term"
 )
@@ -73,6 +74,13 @@ func (c *EpinioClient) AppCreate(appName string, appConfig models.ApplicationUpd
 
 	c.ui.Success().Msg("Ok")
 	return nil
+}
+
+// formatCreatedAt normalizes timestamps to a stable UTC representation that matches
+// the acceptance test expectations (e.g. `2022-05-19 13:49:20 +0000 UTC`), and
+// avoids differences caused by the local time zone of the client.
+func formatCreatedAt(t metav1.Time) string {
+	return t.Time.UTC().Format("2006-01-02 15:04:05 -0700 MST")
 }
 
 // AppsMatching returns all Epinio apps having the specified prefix in their name.
@@ -190,7 +198,7 @@ func (c *EpinioClient) Apps(all bool) error {
 			msg = msg.WithTableRow(
 				app.Meta.Namespace,
 				app.Meta.Name,
-				app.Meta.CreatedAt.String(),
+				formatCreatedAt(app.Meta.CreatedAt),
 				status,
 				routes,
 				configurations,
@@ -199,7 +207,7 @@ func (c *EpinioClient) Apps(all bool) error {
 		} else {
 			msg = msg.WithTableRow(
 				app.Meta.Name,
-				app.Meta.CreatedAt.String(),
+				formatCreatedAt(app.Meta.CreatedAt),
 				status,
 				routes,
 				configurations,
@@ -546,7 +554,7 @@ func (c *EpinioClient) AppPortForward(ctx context.Context, appName, instance str
 }
 
 // Delete removes one or more applications, specified by name
-func (c *EpinioClient) AppDelete(ctx context.Context, appNames []string, all bool) error {
+func (c *EpinioClient) AppDelete(ctx context.Context, appNames []string, all, deleteImage bool) error {
 	if all {
 		c.ui.Note().
 			WithStringValue("Namespace", c.Settings.Namespace).
@@ -577,6 +585,22 @@ func (c *EpinioClient) AppDelete(ctx context.Context, appNames []string, all boo
 	log.Info("start")
 	defer log.Info("return")
 
+	// Confirm image deletion if requested
+	if deleteImage {
+		var m string
+		if len(appNames) == 1 {
+			m = fmt.Sprintf("You are about to delete the application '%s' and its container image from the registry. This action cannot be undone.",
+				appNames[0])
+		} else {
+			m = fmt.Sprintf("You are about to delete %d applications (%s) and their container images from the registry. This action cannot be undone.",
+				len(appNames), namesCSV)
+		}
+
+		if !c.askConfirmation(m) {
+			return errors.New("Cancelled by user")
+		}
+	}
+
 	c.ui.Note().
 		WithStringValue("Names", namesCSV).
 		WithStringValue("Namespace", c.Settings.Namespace).
@@ -599,7 +623,7 @@ func (c *EpinioClient) AppDelete(ctx context.Context, appNames []string, all boo
 		return match.Names
 	})
 
-	response, err := c.API.AppDelete(c.Settings.Namespace, appNames)
+	response, err := c.API.AppDelete(c.Settings.Namespace, appNames, deleteImage)
 	if err != nil {
 		return err
 	}
@@ -625,7 +649,7 @@ func (c *EpinioClient) AppDelete(ctx context.Context, appNames []string, all boo
 func (c *EpinioClient) printAppDetails(app models.App) error {
 	msg := c.ui.Success().WithTable("Key", "Value").
 		WithTableRow("Origin", app.Origin.String()).
-		WithTableRow("Created", app.Meta.CreatedAt.String())
+		WithTableRow("Created", formatCreatedAt(app.Meta.CreatedAt))
 
 	var createdAt time.Time
 	var err error
@@ -824,9 +848,8 @@ func (c *EpinioClient) AppRestage(appName string, restart bool) error {
 
 	log.V(1).Info("wait for job", "StageID", stageID)
 
-	// blocking function that wait until the staging is done
-	err = stagingWithRetry(log.V(1), c.API, app.Meta.Namespace, stageID)
-	if err != nil {
+	// Prefer websocket streaming for completion, fallback to HTTP poll if unavailable.
+	if err := stagingWait(log.V(1), c.API, app.Meta.Namespace, stageID); err != nil {
 		return err
 	}
 
@@ -881,6 +904,38 @@ func stagingWithRetry(logger logr.Logger, apiClient APIClient, namespace, stageI
 		retry.Delay(time.Second),
 		retry.Attempts(duration.RetryMax),
 	)
+}
+
+func stagingWait(logger logr.Logger, apiClient APIClient, namespace, stageID string) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	wsErr := apiClient.StagingCompleteStream(ctx, namespace, stageID, func(event models.StageCompleteEvent) error {
+		logger.Info("staging status", "stageID", stageID, "status", event.Status, "message", event.Message)
+
+		if !event.Completed {
+			return nil
+		}
+
+		switch event.Status {
+		case models.StageStatusSucceeded:
+			return nil
+		case models.StageStatusFailed, models.StageStatusError:
+			if event.Message != "" {
+				return errors.New(event.Message)
+			}
+			return errors.New("staging failed")
+		default:
+			return nil
+		}
+	})
+
+	if wsErr == nil {
+		return nil
+	}
+
+	logger.Info("staging websocket unavailable, falling back to HTTP poll", "error", wsErr.Error())
+	return stagingWithRetry(logger, apiClient, namespace, stageID)
 }
 
 func formatRoutes(routes []string) string {

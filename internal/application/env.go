@@ -142,6 +142,7 @@ func ConfigurationEnvironment(ctx context.Context, cluster *kubernetes.Cluster, 
 
 		// Add all key-value pairs from this configuration to the result
 		// Prefix with configuration name to avoid conflicts
+		// SECURITY: Mask values to prevent secret exposure in API responses
 		for key, value := range secret.Data {
 			// Use a composite key to avoid collisions: configName/key
 			compositeKey := configName + "/" + key

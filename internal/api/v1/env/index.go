@@ -16,10 +16,10 @@ import (
 	"github.com/epinio/epinio/internal/api/v1/response"
 	"github.com/epinio/epinio/internal/application"
 	"github.com/epinio/epinio/internal/cli/server/requestctx"
+	"github.com/gin-gonic/gin"
+
 	apierror "github.com/epinio/epinio/pkg/api/core/v1/errors"
 	"github.com/epinio/epinio/pkg/api/core/v1/models"
-
-	"github.com/gin-gonic/gin"
 )
 
 // Index handles the API endpoint /namespaces/:namespace/applications/:app/environment
@@ -34,7 +34,7 @@ func Index(c *gin.Context) apierror.APIErrors {
 	appName := c.Param("app")
 	grouped := c.Query("grouped") == "true"
 
-	log.Info("returning environment", "namespace", namespaceName, "app", appName, "grouped", grouped)
+	log.Infow("returning environment", "namespace", namespaceName, "app", appName, "grouped", grouped)
 
 	cluster, err := kubernetes.GetCluster(ctx)
 	if err != nil {

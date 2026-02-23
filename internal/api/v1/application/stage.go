@@ -13,17 +13,18 @@ package application
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"encoding/json"
+	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-logr/logr"
+	"github.com/gorilla/websocket"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
+	"golang.org/x/exp/slices"
 	"gopkg.in/yaml.v3"
 	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/utils/ptr"
@@ -213,20 +214,20 @@ func Stage(c *gin.Context) apierror.APIErrors {
 	// Find staging script spec based on the builder image and what images are supported by each spec
 	// This also resolves a `base` reference, if present.
 
-	config, err := DetermineStagingScripts(ctx, log, cluster, helmchart.Namespace(), builderImage)
+	config, err := DetermineStagingScripts(ctx, cluster, helmchart.Namespace(), builderImage)
 	if err != nil {
 		return apierror.InternalError(err, "failed to retrieve staging configuration")
 	}
 
-	log.Info("staging app", "scripts", config.Name)
-	log.Info("staging app", "builder", builderImage)
-	log.Info("staging app", "download", config.DownloadImage)
-	log.Info("staging app", "unpack", config.UnpackImage)
-	log.Info("staging app", "userid", config.UserID)
-	log.Info("staging app", "groupid", config.GroupID)
-	log.Info("staging app", "build env", config.Env)
-	log.Info("staging app", "Staging Values", config.HelmValues)
-	log.Info("staging app", "namespace", namespace, "app", req)
+	log.Infow("staging app", "scripts", config.Name)
+	log.Infow("staging app", "builder", builderImage)
+	log.Infow("staging app", "download", config.DownloadImage)
+	log.Infow("staging app", "unpack", config.UnpackImage)
+	log.Infow("staging app", "userid", config.UserID)
+	log.Infow("staging app", "groupid", config.GroupID)
+	log.Infow("staging app", "build env", config.Env)
+	log.Infow("staging app", "Staging Values", config.HelmValues)
+	log.Infow("staging app", "namespace", namespace, "app", req)
 
 	s3ConnectionDetails, err := s3manager.GetConnectionDetails(ctx, cluster,
 		helmchart.Namespace(), helmchart.S3ConnectionDetailsSecretName)
@@ -353,7 +354,7 @@ func Stage(c *gin.Context) apierror.APIErrors {
 
 	imageURL := params.ImageURL(params.RegistryURL)
 
-	log.Info("staged app", "namespace", helmchart.Namespace(), "app", params.AppRef, "uid", uid, "image", imageURL)
+	log.Infow("staged app", "namespace", helmchart.Namespace(), "app", params.AppRef, "uid", uid, "image", imageURL)
 
 	response.OKReturn(c, models.StageResponse{
 		Stage:    models.NewStage(uid),
@@ -910,12 +911,12 @@ type StagingScriptConfig struct {
 }
 
 func DetermineStagingScripts(ctx context.Context,
-	logger logr.Logger,
 	cluster *kubernetes.Cluster,
 	namespace, builder string) (*StagingScriptConfig, error) {
+	logger := requestctx.Logger(ctx).With("component", "staging-scripts")
 
-	logger.Info("locate staging scripts", "namespace", namespace)
-	logger.Info("locate staging scripts", "builder", builder)
+	logger.Infow("locate staging scripts", "namespace", namespace)
+	logger.Infow("locate staging scripts", "builder", builder)
 
 	configmapSelector := labels.Set(map[string]string{
 		"app.kubernetes.io/component": "epinio-staging",
@@ -929,13 +930,13 @@ func DetermineStagingScripts(ctx context.Context,
 		return nil, err
 	}
 
-	logger.Info("locate staging scripts", "possibles", len(configmapList.Items))
+	logger.Infow("locate staging scripts", "possibles", len(configmapList.Items))
 
 	var candidates []*StagingScriptConfig
 	for _, configmap := range configmapList.Items {
 		config, err := NewStagingScriptConfig(configmap)
 		if err != nil {
-			logger.Info("Error loading config item", fmt.Sprintf("%+v", err))
+			logger.Infow("Error loading config item", "error", fmt.Sprintf("%+v", err))
 			return nil, err
 		}
 		candidates = append(candidates, config)
@@ -956,19 +957,19 @@ func DetermineStagingScripts(ctx context.Context,
 			fallback = config
 			continue
 		}
-		logger.Info("locate staging scripts - found",
+		logger.Infow("locate staging scripts - found",
 			"name", config.Name, "match", pattern)
 		matchable = append(matchable, config)
 	}
 	if fallback != nil {
-		logger.Info("locate staging scripts - fallback",
+		logger.Infow("locate staging scripts - fallback",
 			"name", fallback.Name, "match", fallback.Builder)
 	}
 
 	// match by pattern
 	for _, config := range matchable {
 		pattern := config.Builder
-		logger.Info("locate staging scripts - checking",
+		logger.Infow("locate staging scripts - checking",
 			"name", config.Name, "match", pattern)
 
 		matched, err := filepath.Match(pattern, builder)
@@ -976,10 +977,10 @@ func DetermineStagingScripts(ctx context.Context,
 			return nil, err
 		}
 		if matched {
-			logger.Info("locate staging scripts - match",
+			logger.Infow("locate staging scripts - match",
 				"name", config.Name, "match", pattern, "builder", builder)
 
-			err := StagingScriptConfigResolve(ctx, logger, cluster, config)
+			err := StagingScriptConfigResolve(ctx, cluster, config)
 			if err != nil {
 				return nil, err
 			}
@@ -989,8 +990,8 @@ func DetermineStagingScripts(ctx context.Context,
 	}
 
 	if fallback != nil {
-		logger.Info("locate staging scripts - using fallback", "name", fallback.Name)
-		err := StagingScriptConfigResolve(ctx, logger, cluster, fallback)
+		logger.Infow("locate staging scripts - using fallback", "name", fallback.Name)
+		err := StagingScriptConfigResolve(ctx, cluster, fallback)
 		if err != nil {
 			return nil, err
 		}
@@ -1000,13 +1001,14 @@ func DetermineStagingScripts(ctx context.Context,
 	return nil, fmt.Errorf("no matches, no fallback")
 }
 
-func StagingScriptConfigResolve(ctx context.Context, logger logr.Logger, cluster *kubernetes.Cluster, config *StagingScriptConfig) error {
+func StagingScriptConfigResolve(ctx context.Context, cluster *kubernetes.Cluster, config *StagingScriptConfig) error {
 	if config.Base == "" {
 		// nothing to do without a base
 		return nil
 	}
 
-	logger.Info("locate staging scripts - inherit", "base", config.Base)
+	logger := requestctx.Logger(ctx).With("component", "staging-scripts")
+	logger.Infow("locate staging scripts - inherit", "base", config.Base)
 
 	base, err := cluster.GetConfigMap(ctx, helmchart.Namespace(), config.Base)
 	if err != nil {

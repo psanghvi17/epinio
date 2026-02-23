@@ -33,8 +33,10 @@ import (
 	"github.com/epinio/epinio/internal/api/v1/namespace"
 	"github.com/epinio/epinio/internal/api/v1/response"
 	"github.com/epinio/epinio/internal/api/v1/service"
+	"github.com/epinio/epinio/internal/api/v1/supportbundle"
 	"github.com/epinio/epinio/internal/auth"
 	"github.com/epinio/epinio/internal/cli/server/requestctx"
+
 	"github.com/epinio/epinio/pkg/api/core/v1/errors"
 )
 
@@ -62,8 +64,8 @@ func funcName(i interface{}) string {
 func errorHandler(action APIActionFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if errors := action(c); errors != nil {
-			requestctx.Logger(c.Request.Context()).Info(
-				"responding with json error response",
+			log := requestctx.Logger(c.Request.Context()).With("component", "api-router")
+			log.Infow("responding with json error response",
 				"action", funcName(action),
 				"errors", errors,
 			)
@@ -96,6 +98,7 @@ func put(path string, h gin.HandlerFunc) routes.Route {
 var AdminRoutes map[string]struct{} = map[string]struct{}{
 	"MaintenanceCleanupStaleCaches":      {},
 	"MaintenanceCleanupStaleCachesQuery":  {},
+  "/api/v1/support-bundle": {},
 }
 
 var Routes = routes.NamedRoutes{
@@ -231,6 +234,8 @@ var Routes = routes.NamedRoutes{
 	// Maintenance endpoints
 	"MaintenanceCleanupStaleCaches":      post("/maintenance/cleanup-stale-caches", errorHandler(maintenance.CleanupStaleCaches)),
 	"MaintenanceCleanupStaleCachesQuery": get("/maintenance/cleanup-stale-caches", errorHandler(maintenance.CleanupStaleCachesQuery)),
+	// Support bundle
+	"SupportBundle": get("/support-bundle", errorHandler(supportbundle.Bundle)),
 }
 
 var WsRoutes = routes.NamedRoutes{
@@ -239,6 +244,7 @@ var WsRoutes = routes.NamedRoutes{
 	"AppLogs":            get("/namespaces/:namespace/applications/:app/logs", application.Logs),
 	"ServicePortForward": get("/namespaces/:namespace/services/:service/portforward", errorHandler(service.PortForward)),
 	"StagingLogs":        get("/namespaces/:namespace/staging/:stage_id/logs", application.Logs),
+	"StagingCompleteWs":  get("/namespaces/:namespace/staging/:stage_id/complete", application.StagedWebsocket),
 }
 
 // Lemon extends the specified router with the methods and urls
