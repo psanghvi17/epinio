@@ -9,6 +9,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package maintenance provides API handlers for maintenance operations such as
+// stale cache PVC cleanup. Automated cleanup should be configured via the
+// Epinio Helm chart (epinio/helm-charts) when possible; see docs/howtos/stale-cache-cleanup.md.
 package maintenance
 
 import (
@@ -72,7 +75,7 @@ func performCleanup(ctx context.Context, cluster *kubernetes.Cluster, req Cleanu
 			exists, err := application.AppExists(ctx, cluster, appRef)
 			if err != nil {
 				// If we can't check, be conservative and skip
-				logger.V(1).Info("skipping cache check due to error",
+				logger.Debugw("skipping cache check due to error",
 					"pvc", cacheInfo.PVC.Name,
 					"error", err.Error(),
 				)
@@ -103,17 +106,17 @@ func CleanupStaleCaches(c *gin.Context) apierror.APIErrors {
 	ctx := c.Request.Context()
 	logger := requestctx.Logger(ctx)
 
-	cluster, err := kubernetes.GetCluster(ctx)
-	if err != nil {
-		return apierror.InternalError(err)
-	}
-
-	// Parse request body (optional)
+	// Parse request body first (optional) so validation errors return 400 without needing cluster
 	var req CleanupStaleCachesRequest
 	if c.Request.ContentLength > 0 {
 		if err := c.ShouldBindJSON(&req); err != nil {
 			return apierror.NewBadRequestError(err.Error())
 		}
+	}
+
+	cluster, err := kubernetes.GetCluster(ctx)
+	if err != nil {
+		return apierror.InternalError(err)
 	}
 
 	// Set defaults - use pointers to distinguish between omitted and zero values
@@ -194,17 +197,13 @@ func CleanupStaleCaches(c *gin.Context) apierror.APIErrors {
 }
 
 // CleanupStaleCachesQuery handles GET /api/v1/maintenance/cleanup-stale-caches?staleDays=30&dryRun=true
-// This allows calling the cleanup via simple GET requests (useful for cron jobs)
+// This allows calling the cleanup via simple GET requests (useful for cron jobs).
+// Query parameters are validated before acquiring cluster so invalid input returns 400.
 func CleanupStaleCachesQuery(c *gin.Context) apierror.APIErrors {
 	ctx := c.Request.Context()
 	logger := requestctx.Logger(ctx)
 
-	cluster, err := kubernetes.GetCluster(ctx)
-	if err != nil {
-		return apierror.InternalError(err)
-	}
-
-	// Parse query parameters
+	// Parse and validate query parameters first so validation errors return 400 without needing cluster
 	staleDays := application.DefaultStaleCacheDays
 	if staleDaysStr := c.Query("staleDays"); staleDaysStr != "" {
 		parsed, err := strconv.Atoi(staleDaysStr)
@@ -214,6 +213,11 @@ func CleanupStaleCachesQuery(c *gin.Context) apierror.APIErrors {
 		if parsed > 0 {
 			staleDays = parsed
 		}
+	}
+
+	cluster, err := kubernetes.GetCluster(ctx)
+	if err != nil {
+		return apierror.InternalError(err)
 	}
 
 	// For GET requests, default checkAppExists to true for safety; allow explicit false
