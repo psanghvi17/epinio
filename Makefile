@@ -27,7 +27,7 @@
 # Epinio Version: "v0.1.6-16-ge5ad0849-2021-11-18T10-00-27"
 
 VSUFFIX ?= 
-VERSION ?= $(shell git describe --tags)$(VSUFFIX)
+VERSION ?= $(shell git describe --tags 2>/dev/null || echo "v0.0.0-dev")$(VSUFFIX)
 CGO_ENABLED ?= 0
 export LDFLAGS += -X github.com/epinio/epinio/internal/version.Version=$(VERSION)
 
